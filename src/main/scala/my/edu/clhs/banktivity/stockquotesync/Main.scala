@@ -41,8 +41,9 @@ object Main extends App with LazyLogging {
         _: Done <- Slick.
           source(sql"SELECT zuniqueid, zsymbol FROM zsecurity".as[(String, String)]).
           mapAsync(4) {
-            case (securityId: String, symbol: String) => http.
-              singleRequest(
+            case (securityId: String, symbol: String) =>
+              logger.info(s"Downloading stock quotes for ${symbol}...")
+              http.singleRequest(
                 HttpRequest(
                   uri = s"https://query1.finance.yahoo.com/v7/finance/download/${symbol}?interval=1d&events=history"
                 )
@@ -124,7 +125,7 @@ object Main extends App with LazyLogging {
               logger.error("Stock quote synchronization failed", t)
               Future.failed(t)
           }
-      } yield logger.info("Stock quotes updated successfully.")
+      } yield logger.info("Stock quotes synchronized successfully.")
 
       syncFut.onComplete { _ =>
         http.shutdownAllConnectionPools()
