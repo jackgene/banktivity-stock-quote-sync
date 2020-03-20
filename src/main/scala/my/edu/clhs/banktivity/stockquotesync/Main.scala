@@ -80,9 +80,9 @@ object Main extends App with LazyLogging {
               DBIO.sequence(
                 batch.toVector.map {
                   case (
-                    securityId: String, _: String, date: LocalDate,
-                    open: BigDecimal, high: BigDecimal, low: BigDecimal, close: BigDecimal, vol: Int
-                    ) =>
+                      securityId: String, _: String, date: LocalDate,
+                      open: BigDecimal, high: BigDecimal, low: BigDecimal, close: BigDecimal, vol: Int
+                      ) =>
                     val ibankTimestamp: Long = date.
                       minusYears(31).
                       atStartOfDay(ZoneId.ofOffset("", ZoneOffset.ofHours(3))).
@@ -99,22 +99,21 @@ object Main extends App with LazyLogging {
                       WHERE
                         z_ent = ${42} AND z_opt = ${1} AND
                         zdate = ${ibankTimestamp} AND zsecurityid = ${securityId}
-                    """.
-                      flatMap {
-                        case 0 =>
-                          sqlu"""
-                              INSERT INTO zprice (
-                                z_ent, z_opt, zdate, zsecurityid,
-                                zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice
-                              ) VALUES (
-                                ${42}, ${1}, ${ibankTimestamp}, ${securityId},
-                                ${vol}, ${close}, ${high}, ${low}, ${open}
-                              )
-                            """
+                    """.flatMap {
+                      case 0 =>
+                        sqlu"""
+                            INSERT INTO zprice (
+                              z_ent, z_opt, zdate, zsecurityid,
+                              zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice
+                            ) VALUES (
+                              ${42}, ${1}, ${ibankTimestamp}, ${securityId},
+                              ${vol}, ${close}, ${high}, ${low}, ${open}
+                            )
+                          """
 
-                        case nonzero: Int =>
-                          DBIO.successful(nonzero)
-                      }
+                      case nonzero: Int =>
+                        DBIO.successful(nonzero)
+                    }
                 }
               ).
                 map(_.size)
