@@ -38,10 +38,10 @@
              (match (re-matches yahoo-quote-csv-pattern body)
                     ([_ date open high low close volume] :seq)
                     {:date   (LocalDate/parse date)
-                     :open   (edn/read-string open)
-                     :high   (edn/read-string high)
-                     :low    (edn/read-string low)
-                     :close  (edn/read-string close)
+                     :open   (bigdec open)
+                     :high   (bigdec high)
+                     :low    (bigdec low)
+                     :close  (bigdec close)
                      :volume (edn/read-string volume)}
                     :else (throw (IllegalStateException. (str "Unparseable response:\n" body))))
              {:status 404} nil
