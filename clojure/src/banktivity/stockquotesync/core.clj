@@ -2,16 +2,20 @@
   (:require [clojure.core.match :refer [match]])
   (:require [clojure.edn :as edn])
   (:require [clojure.java.jdbc :as jdbc])
+  (:require [clojure.tools.logging :as log])
   (:require [org.httpkit.client :as http])
   (:gen-class)
   (:import (java.time LocalDate ZoneId ZoneOffset)))
 
-(defn db [dbname]
+(defn db [db-path]
+  (log/info (str "Processing SQLite file " db-path "..."))
   {:dbtype "sqlite"
-   :dbname dbname})
+   :dbname db-path})
 
-(defn positions [db]
-  (jdbc/query db ["SELECT zuniqueid AS securityid, zsymbol AS symbol FROM zsecurity"]))
+(defn securities [db]
+  (let [results (jdbc/query db ["SELECT zuniqueid AS securityid, zsymbol AS symbol FROM zsecurity"])]
+    (log/info "Found" (count results) "securities...")
+    results))
 
 ; Sample CSV output:
 ; Date,Open,High,Low,Close,Adj Close,Volume
@@ -19,9 +23,10 @@
 (def yahoo-quote-csv-pattern
   #"Date,Open,High,Low,Close,Adj Close,Volume\n([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),[0-9]+\.[0-9]+,([0-9]+)\n?.*")
 
-(defn stock-quote [symbol]
+(defn price [symbol]
   (let [resp (http/get (str "https://query1.finance.yahoo.com/v7/finance/download/" symbol "?interval=1d&events=history"))]
     (future
+      (log/info "Downloading prices for " symbol "...")
       (match @resp
              {:status 200 :body body}
              (match (re-matches yahoo-quote-csv-pattern body)
@@ -42,34 +47,40 @@
       (.plusDays (.minusYears date 31) 3)
       (ZoneId/ofOffset "" (ZoneOffset/ofHours 3)))))
 
-(defn persist-stock-quote [db position]
-  (let [[updated] (jdbc/update! db :zprice
-                                {:zvolume       (:volume position)
-                                 :zclosingprice (:close position)
-                                 :zhighprice    (:high position)
-                                 :zlowprice     (:low position)
-                                 :zopeningprice (:open position)}
-                                ["z_ent = ? AND z_opt = ? AND zdate = ? AND zsecurityid = ?"
-                                 42 1 (ibank-date (:date position)) (:securityid position)])]
-    (if (zero? updated)
-      (jdbc/insert! db :zprice
-                    {:z_ent         42
-                     :z_opt         1
-                     :zdate         (ibank-date (:date position))
-                     :zsecurityid   (:securityid position)
-                     :zvolume       (:volume position)
-                     :zclosingprice (:close position)
-                     :zhighprice    (:high position)
-                     :zlowprice     (:low position)
-                     :zopeningprice (:open position)}))))
+(defn persist-price [db position]
+  (let [updated (jdbc/update! db :zprice
+                              {:zvolume       (:volume position)
+                               :zclosingprice (:close position)
+                               :zhighprice    (:high position)
+                               :zlowprice     (:low position)
+                               :zopeningprice (:open position)}
+                              ["z_ent = ? AND z_opt = ? AND zdate = ? AND zsecurityid = ?"
+                               42 1 (ibank-date (:date position)) (:securityid position)])]
+    (first
+      (if (zero? (first updated))
+        ((constantly 1)
+         (jdbc/insert! db :zprice
+                       {:z_ent         42
+                        :z_opt         1
+                        :zdate         (ibank-date (:date position))
+                        :zsecurityid   (:securityid position)
+                        :zvolume       (:volume position)
+                        :zclosingprice (:close position)
+                        :zhighprice    (:high position)
+                        :zlowprice     (:low position)
+                        :zopeningprice (:open position)}))
+        updated))))
 
 (defn -main [& args]
   (if-not (empty? args)
-    (let [db-spec (db (str (first args) "/accountsData.ibank"))]
-      (map (partial persist-stock-quote db-spec)
-        (remove (comp nil? :open)
-          (map #(merge % @(stock-quote (:symbol %))) ; Is the deref (@) here blocking too early?
-            ;(comp (partial apply merge) (juxt identity (comp deref stock-quote :symbol)))
-            (positions db-spec)))))
+    (let [db-path (str (first args) "/accountsData.ibank")
+          db-spec (db db-path)
+          updates (map #(persist-price db-spec %)
+                       (remove (comp nil? :open)
+                               (map #(merge % @(price (:symbol %))) ; Is the deref (@) here blocking too early?
+                                    ;(comp (partial apply merge) (juxt identity (comp deref stock-quote :symbol)))
+                                    (securities db-spec))))]
+      (log/info "Persisted prices for" (reduce + updates) "securities")
+      (log/info "Security prices synchronized successfully."))
 
-    (throw (IllegalArgumentException. "Please specify path to ibank data file."))))
+    (.println *err* "Please specify path to ibank data file.")))
