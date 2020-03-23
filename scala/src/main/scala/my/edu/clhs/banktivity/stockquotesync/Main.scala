@@ -38,29 +38,29 @@ object Main extends App with LazyLogging {
         uri = s"https://query1.finance.yahoo.com/v7/finance/download/${symbol}?interval=1d&events=history"
       )
     ).
-      flatMap {
-        case HttpResponse(StatusCodes.OK, _, entity: HttpEntity, _) =>
-          entity.dataBytes.
-            runFold(ByteString.empty)(_ ++ _).
-            map(_.utf8String match {
-              case YahooQuoteCsvPattern(d: String, o: String, h: String, l: String, c: String, v: String) =>
-                Some(
-                  (
-                    securityId, symbol, LocalDate.parse(d),
-                    BigDecimal(o), BigDecimal(h), BigDecimal(l), BigDecimal(c), v.toInt
-                  )
+    flatMap {
+      case HttpResponse(StatusCodes.OK, _, entity: HttpEntity, _) =>
+        entity.dataBytes.
+          runFold(ByteString.empty)(_ ++ _).
+          map(_.utf8String match {
+            case YahooQuoteCsvPattern(d: String, o: String, h: String, l: String, c: String, v: String) =>
+              Some(
+                (
+                  securityId, symbol, LocalDate.parse(d),
+                  BigDecimal(o), BigDecimal(h), BigDecimal(l), BigDecimal(c), v.toInt
                 )
-              case _ => None
-            })
+              )
+            case _ => None
+          })
 
-        case HttpResponse(StatusCodes.NotFound, _, entity: HttpEntity, _) =>
-          entity.discardBytes()
-          Future.successful(None)
+      case HttpResponse(StatusCodes.NotFound, _, entity: HttpEntity, _) =>
+        entity.discardBytes()
+        Future.successful(None)
 
-        case HttpResponse(statusCode: StatusCode, _, entity: HttpEntity, _) =>
-          entity.discardBytes()
-          Future.failed(new RuntimeException(s"""Received HTTP ${statusCode} for symbol "${symbol}""""))
-      }
+      case HttpResponse(statusCode: StatusCode, _, entity: HttpEntity, _) =>
+        entity.discardBytes()
+        Future.failed(new RuntimeException(s"""Received HTTP ${statusCode} for symbol "${symbol}""""))
+    }
   }
 
   def persistPrices(
