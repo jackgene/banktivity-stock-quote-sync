@@ -21,6 +21,9 @@ object Main extends App with LazyLogging {
   val YahooQuoteCsvPattern =
     """Date,Open,High,Low,Close,Adj Close,Volume\n([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),[0-9]+\.[0-9]+,([0-9]+)\n?.*""".r
 
+  /**
+   * Gets all the securities in the iBank SQLite database.
+   */
   def securities(db: Database)(implicit ec: ExecutionContext): Future[Seq[(String,String)]] = {
     for {
       secs: Seq[(String, String)] <- db.run(sql"SELECT zuniqueid, zsymbol FROM zsecurity".as[(String, String)])
@@ -28,6 +31,9 @@ object Main extends App with LazyLogging {
     } yield secs
   }
 
+  /**
+   * Enriches a security with price information from Yahoo Finance.
+   */
   def prices(
       http: HttpExt, securityId: String, symbol: String)(
       implicit ec: ExecutionContext, mat: Materializer):
@@ -63,6 +69,9 @@ object Main extends App with LazyLogging {
     }
   }
 
+  /**
+   * Persists price-enriched security to the iBank SQLite database.
+   */
   def persistPrices(
       db: Database, prices: Seq[(String, String, LocalDate, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Int)])(
       implicit ec: ExecutionContext):
