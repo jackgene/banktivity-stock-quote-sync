@@ -5,7 +5,8 @@
   (:require [clojure.tools.logging :as log])
   (:require [org.httpkit.client :as http])
   (:gen-class)
-  (:import (java.time LocalDate ZoneId ZoneOffset)))
+  (:import (java.time LocalDate OffsetDateTime OffsetTime ZoneOffset)
+           (java.time.temporal ChronoUnit)))
 
 (defn db
   "Creates core.jdbc db-spec from the path to a SQLite file."
@@ -47,13 +48,12 @@
              {:status 404} nil
              {:status bad-status-code} (throw (IllegalStateException. (str "Received HTTP " bad-status-code " for symbol \"" symbol "\"")))))))
 
-(defn ibank-date
+(def ibank-epoch (OffsetDateTime/of 2001 1 1 0 0 0 0 ZoneOffset/UTC))
+
+(defn seconds-since-ibank-epoch
   "Translates a standard LocalDate to its iBank representation"
   [date]
-  (.toEpochSecond
-    (.atStartOfDay
-      (.plusDays (.minusYears date 31) 3)
-      (ZoneId/ofOffset "" (ZoneOffset/ofHours 3)))))
+  (.between ChronoUnit/SECONDS ibank-epoch (.atTime date (OffsetTime/of 0 0 0 0 (ZoneOffset/ofHours -12)))))
 
 (defn persist-price
   "Persists price-enriched security to the iBank SQLite database."
@@ -65,14 +65,14 @@
                                :zlowprice     (:low position)
                                :zopeningprice (:open position)}
                               ["z_ent = ? AND z_opt = ? AND zdate = ? AND zsecurityid = ?"
-                               42 1 (ibank-date (:date position)) (:securityid position)])]
+                               42 1 (seconds-since-ibank-epoch (:date position)) (:securityid position)])]
     (first
       (if (zero? (first updated))
         ((constantly 1)
          (jdbc/insert! db :zprice
                        {:z_ent         42
                         :z_opt         1
-                        :zdate         (ibank-date (:date position))
+                        :zdate         (seconds-since-ibank-epoch (:date position))
                         :zsecurityid   (:securityid position)
                         :zvolume       (:volume position)
                         :zclosingprice (:close position)
