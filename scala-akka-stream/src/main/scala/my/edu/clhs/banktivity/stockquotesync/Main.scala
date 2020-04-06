@@ -5,7 +5,7 @@ import java.time.{LocalDate, ZoneId, ZoneOffset}
 
 import akka.Done
 import akka.actor.ActorSystem
-import akka.http.scaladsl.model.{HttpRequest, HttpResponse, StatusCodes}
+import akka.http.scaladsl.model.{HttpEntity, HttpRequest, HttpResponse, StatusCode, StatusCodes}
 import akka.http.scaladsl.{Http, HttpExt}
 import akka.stream._
 import akka.stream.alpakka.slick.scaladsl._
@@ -17,10 +17,11 @@ import scala.concurrent._
 object Main extends App with LazyLogging {
   args match {
     case Array(ibankFilePath: String, _*) =>
-      val ibankFile: Path =
-        Paths.get(System.getProperty("user.dir")).
+      val ibankFile: Path = Paths.
+        get(System.getProperty("user.dir")).
         resolve(Paths.get(ibankFilePath)).
-        resolve(Paths.get("accountsData.ibank"))
+        resolve(Paths.get("accountsData.ibank")).
+        normalize
       System.setProperty("ibankFilePath", ibankFile.toString)
 
       implicit val system: ActorSystem =
@@ -33,39 +34,44 @@ object Main extends App with LazyLogging {
       // Sample CSV output:
       // Date,Open,High,Low,Close,Adj Close,Volume
       // 2020-03-19,1093.050049,1094.000000,1060.107544,1078.910034,1078.910034,333575
-      val QuoteRegex =
-        """([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+)""".r
+      val YahooQuoteCsvPattern =
+        """([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),[0-9]+\.[0-9]+,([0-9]+)""".r
       import session.profile.api._
 
+      logger.info(s"Processing SQLite file ${ibankFile}...")
       val syncFut: Future[Unit] = for {
         _: Done <- Slick.
           source(sql"SELECT zuniqueid, zsymbol FROM zsecurity".as[(String, String)]).
           mapAsync(4) {
             case (securityId: String, symbol: String) =>
-              logger.info(s"Downloading stock quotes for ${symbol}...")
+              logger.info(s"Downloading prices for ${symbol}...")
               http.singleRequest(
                 HttpRequest(
                   uri = s"https://query1.finance.yahoo.com/v7/finance/download/${symbol}?interval=1d&events=history"
                 )
               ).
-              flatMap { httpResponse: HttpResponse =>
-                if (httpResponse.status == StatusCodes.OK) {
-                  httpResponse.entity.dataBytes.
+              flatMap {
+                case HttpResponse(StatusCodes.OK, _, entity: HttpEntity, _) =>
+                  entity.dataBytes.
                     runFold(ByteString.empty)(_ ++ _).
                     map { body: ByteString =>
                       Some((securityId, symbol, body.utf8String))
                     }
-                } else {
-                  httpResponse.discardEntityBytes()
+
+                case HttpResponse(StatusCodes.NotFound, _, entity: HttpEntity, _) =>
+                  entity.discardBytes()
                   Future.successful(None)
-                }
+
+                case HttpResponse(statusCode: StatusCode, _, entity: HttpEntity, _) =>
+                  entity.discardBytes()
+                  Future.failed(new RuntimeException(s"""Received HTTP ${statusCode} for symbol "${symbol}""""))
               }
           }.
           collect {
             case Some((securityId: String, symbol: String, body: String)) =>
               body.split("\n").tail.
                 collect {
-                  case QuoteRegex(date: String, o: String, h: String, l: String, c: String, _: String, vol: String) =>
+                  case YahooQuoteCsvPattern(date: String, o: String, h: String, l: String, c: String, vol: String) =>
                     (
                       securityId, symbol, LocalDate.parse(date),
                       BigDecimal(o), BigDecimal(h), BigDecimal(l), BigDecimal(c), vol.toInt
@@ -76,7 +82,7 @@ object Main extends App with LazyLogging {
           grouped(10000).
           runWith {
             Slick.sink { batch: Seq[(String, String, LocalDate, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Int)] =>
-              logger.info(s"Inserting ${batch.size} stock quotes...")
+              logger.info(s"Inserting ${batch.size} prices...")
               DBIO.sequence(
                 batch.toVector.map {
                   case (
@@ -116,7 +122,7 @@ object Main extends App with LazyLogging {
                     }
                 }
               ).
-                map(_.size)
+              map(_.sum)
             }
           }.
           recoverWith {
