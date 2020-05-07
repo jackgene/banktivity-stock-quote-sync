@@ -152,6 +152,12 @@ func persistStockPrice(in chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 			}
 		}
 	}
+	_, err := tx.Exec(
+		`UPDATE z_primarykey
+		 SET z_max = (SELECT MAX(z_pk) FROM zprice)
+		 WHERE z_name = 'Price'
+		 `)
+	checkDatabaseTxError(err, tx, database)
 	stdOut.Printf("Persisted prices for %v securities...\n", count)
 }
 
