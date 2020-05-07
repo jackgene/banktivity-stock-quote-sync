@@ -19,6 +19,8 @@ const opt = 1
 const dateLayout = "2006-01-02"
 const httpConcurrency = 4
 
+var stdOut = log.New(os.Stdout, "", log.Flags())
+var stdErr = log.New(os.Stderr, "", log.Flags())
 var iBankEpoch = time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
 var yahooQuoteCsvPattern *regexp.Regexp
 
@@ -35,14 +37,14 @@ type StockPrice struct {
 
 func checkError(err error) {
 	if err != nil {
-		log.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed", err)
 	}
 }
 
 func checkDatabaseError(err error, database *sql.DB) {
 	if err != nil {
 		database.Close()
-		log.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed", err)
 	}
 }
 
@@ -50,7 +52,7 @@ func checkDatabaseTxError(err error, tx *sql.Tx, database *sql.DB) {
 	if err != nil {
 		tx.Rollback()
 		database.Close()
-		log.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed", err)
 	}
 }
 
@@ -69,12 +71,12 @@ func readSecurities(out chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 		count += 1
 	}
 	close(out)
-	log.Printf("Found %v securities...\n", count)
+	stdOut.Printf("Found %v securities...\n", count)
 }
 
 func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 	for stockPrice := range in {
-		log.Printf("Downloading prices for %v...\n", stockPrice.symbol)
+		stdOut.Printf("Downloading prices for %v...\n", stockPrice.symbol)
 		resp, err := http.Get("https://query1.finance.yahoo.com/v7/finance/download/" + stockPrice.symbol + "?interval=1d&events=history")
 		checkDatabaseTxError(err, tx, database)
 
@@ -114,32 +116,33 @@ func persistStockPrice(in chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 		if stockPrice != nil {
 			updateResult, err := tx.Exec(
 				`UPDATE zprice
-							SET
-								zvolume = $1,
-								zclosingprice = $2,
-								zhighprice = $3,
-								zlowprice = $4,
-								zopeningprice = $5
-							WHERE
-								z_ent = $6 AND z_opt = $7 AND
-								zdate = $8 AND zsecurityid = $9
-							`,
+				SET
+					zvolume = $1,
+					zclosingprice = $2,
+					zhighprice = $3,
+					zlowprice = $4,
+					zopeningprice = $5
+				WHERE
+					z_ent = $6 AND z_opt = $7 AND
+					zdate = $8 AND zsecurityid = $9
+				`,
 				stockPrice.volume, stockPrice.close, stockPrice.high, stockPrice.low, stockPrice.open, ent, opt, secondsSinceIBankEpoch(stockPrice.date), stockPrice.securityId)
 			checkDatabaseTxError(err, tx, database)
 			updateCount, err := updateResult.RowsAffected()
 			if updateCount == 0 {
 				_, err := tx.Exec(
 					`INSERT INTO zprice (
-									z_ent, z_opt, zdate, zsecurityid,
-									zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice
-								) VALUES (
-									$1, $2, $3, $4, $5, $6, $7, $8, $9
-								)`,
+						z_ent, z_opt, zdate, zsecurityid,
+						zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice
+					) VALUES (
+						$1, $2, $3, $4, $5, $6, $7, $8, $9
+					)`,
 					ent, opt, secondsSinceIBankEpoch(stockPrice.date), stockPrice.securityId, stockPrice.volume, stockPrice.close, stockPrice.high, stockPrice.low, stockPrice.open)
 				checkDatabaseTxError(err, tx, database)
-				log.Printf("No existing record for %v, new row inserted...\n", stockPrice.symbol)
+				stdOut.Printf("No existing record for %v, new row inserted...\n", stockPrice.symbol)
+
 			} else {
-				log.Printf("Existing record for %v updated...\n", stockPrice.symbol)
+				stdOut.Printf("Existing record for %v updated...\n", stockPrice.symbol)
 			}
 			count += 1
 		} else {
@@ -149,7 +152,7 @@ func persistStockPrice(in chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 			}
 		}
 	}
-	log.Printf("Persisted prices for %v securities...\n", count)
+	stdOut.Printf("Persisted prices for %v securities...\n", count)
 }
 
 func main() {
@@ -164,7 +167,7 @@ func main() {
 	if len(os.Args) == 2 {
 		iBankDataDir := os.Args[1]
 		iBankDataFile := filepath.Join(iBankDataDir, "accountsData.ibank")
-		log.Printf("Processing SQLite file %v...\n", iBankDataFile)
+		stdOut.Printf("Processing SQLite file %v...\n", iBankDataFile)
 
 		database, err := sql.Open("sqlite3", iBankDataFile)
 		checkDatabaseError(err, database)
@@ -185,8 +188,8 @@ func main() {
 
 		tx.Commit()
 		database.Close()
-		log.Println("Security prices synchronized successfully.")
+		stdOut.Println("Security prices synchronized successfully.")
 	} else {
-		log.Fatal("Please specify path to ibank data file.")
+		stdErr.Fatal("Please specify path to ibank data file.")
 	}
 }
