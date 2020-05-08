@@ -32,7 +32,7 @@ type StockPrice struct {
 	high       decimal.Decimal
 	low        decimal.Decimal
 	close      decimal.Decimal
-	volume     int64
+	volume     int
 }
 
 func checkError(err error) {
@@ -96,7 +96,7 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 			checkDatabaseTxError(err, tx, database)
 			stockPrice.close, err = decimal.NewFromString(cols[5])
 			checkDatabaseTxError(err, tx, database)
-			stockPrice.volume, err = strconv.ParseInt(cols[6], 10, 32)
+			stockPrice.volume, err = strconv.Atoi(cols[6])
 			checkDatabaseTxError(err, tx, database)
 
 			out <- stockPrice
