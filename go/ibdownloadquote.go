@@ -181,16 +181,16 @@ func main() {
 		tx, err := database.Begin()
 		checkDatabaseTxError(err, tx, database)
 
-		enrichmentCh := make(chan *StockPrice, 1024)
-		persistenceCh := make(chan *StockPrice)
+		enrichmentChan := make(chan *StockPrice, 1024)
+		persistenceChan := make(chan *StockPrice)
 
-		readSecurities(enrichmentCh, tx, database)
+		readSecurities(enrichmentChan, tx, database)
 
 		for i := 0; i < httpConcurrency; i += 1 {
-			go enrichStockPrice(enrichmentCh, persistenceCh, tx, database)
+			go enrichStockPrice(enrichmentChan, persistenceChan, tx, database)
 		}
 
-		persistStockPrice(persistenceCh, tx, database)
+		persistStockPrice(persistenceChan, tx, database)
 
 		tx.Commit()
 		database.Close()
