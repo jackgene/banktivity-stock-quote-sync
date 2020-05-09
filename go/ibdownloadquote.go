@@ -5,8 +5,6 @@ import (
 	"encoding/csv"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/shopspring/decimal"
-	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -103,8 +101,6 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 					out <- stockPrice
 				}
 			}
-		} else {
-			io.Copy(ioutil.Discard, resp.Body)
 		}
 	}
 	out <- nil
