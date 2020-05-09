@@ -2,14 +2,15 @@ package main
 
 import (
 	"database/sql"
+	"encoding/csv"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/shopspring/decimal"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"time"
 )
@@ -22,7 +23,6 @@ const httpConcurrency = 4
 var stdOut = log.New(os.Stdout, "", log.Flags())
 var stdErr = log.New(os.Stderr, "", log.Flags())
 var iBankEpoch = time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
-var yahooQuoteCsvPattern *regexp.Regexp
 
 type StockPrice struct {
 	securityId string
@@ -33,12 +33,6 @@ type StockPrice struct {
 	low        decimal.Decimal
 	close      decimal.Decimal
 	volume     int
-}
-
-func checkError(err error) {
-	if err != nil {
-		stdErr.Fatal("Security price synchronization failed: ", err)
-	}
 }
 
 func checkDatabaseError(err error, database *sql.DB) {
@@ -82,24 +76,35 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 		defer resp.Body.Close()
 
 		if resp.StatusCode == 200 {
-			body, err := ioutil.ReadAll(resp.Body)
+			csvReader := csv.NewReader(resp.Body)
+			data, err := csvReader.ReadAll()
 			checkDatabaseTxError(err, tx, database)
 
-			cols := yahooQuoteCsvPattern.FindStringSubmatch(string(body))
-			stockPrice.date, err = time.Parse(dateLayout, cols[1])
-			checkDatabaseTxError(err, tx, database)
-			stockPrice.open, err = decimal.NewFromString(cols[2])
-			checkDatabaseTxError(err, tx, database)
-			stockPrice.high, err = decimal.NewFromString(cols[3])
-			checkDatabaseTxError(err, tx, database)
-			stockPrice.low, err = decimal.NewFromString(cols[4])
-			checkDatabaseTxError(err, tx, database)
-			stockPrice.close, err = decimal.NewFromString(cols[5])
-			checkDatabaseTxError(err, tx, database)
-			stockPrice.volume, err = strconv.Atoi(cols[6])
-			checkDatabaseTxError(err, tx, database)
+			if len(data) > 1 {
+				headers := data[0]
+				if headers[0] == "Date" && headers[1] == "Open" && headers[2] == "High" &&
+					headers[3] == "Low" && headers[4] == "Close" &&
+					headers[5] == "Adj Close" && headers[6] == "Volume" {
+					cols := data[1]
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.date, err = time.Parse(dateLayout, cols[0])
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.open, err = decimal.NewFromString(cols[1])
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.high, err = decimal.NewFromString(cols[2])
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.low, err = decimal.NewFromString(cols[3])
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.close, err = decimal.NewFromString(cols[4])
+					checkDatabaseTxError(err, tx, database)
+					stockPrice.volume, err = strconv.Atoi(cols[6])
+					checkDatabaseTxError(err, tx, database)
 
-			out <- stockPrice
+					out <- stockPrice
+				}
+			}
+		} else {
+			io.Copy(ioutil.Discard, resp.Body)
 		}
 	}
 	out <- nil
@@ -154,22 +159,14 @@ func persistStockPrice(in chan *StockPrice, tx *sql.Tx, database *sql.DB) {
 	}
 	_, err := tx.Exec(
 		`UPDATE z_primarykey
-		 SET z_max = (SELECT MAX(z_pk) FROM zprice)
-		 WHERE z_name = 'Price'
-		 `)
+		SET z_max = (SELECT MAX(z_pk) FROM zprice)
+		WHERE z_name = 'Price'
+		`)
 	checkDatabaseTxError(err, tx, database)
 	stdOut.Printf("Persisted prices for %v securities...\n", count)
 }
 
 func main() {
-	var err error
-	// Sample CSV output:
-	// Date,Open,High,Low,Close,Adj Close,Volume
-	// 2020-03-19,1093.050049,1094.000000,1060.107544,1078.910034,1078.910034,333575
-	yahooQuoteCsvPattern, err = regexp.Compile(
-		`Date,Open,High,Low,Close,Adj Close,Volume\n([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),([0-9]+\.[0-9]+),[0-9]+\.[0-9]+,([0-9]+)\n?.*`)
-	checkError(err)
-
 	if len(os.Args) == 2 {
 		iBankDataDir := os.Args[1]
 		iBankDataFile := filepath.Join(iBankDataDir, "accountsData.ibank")
