@@ -37,14 +37,14 @@ type StockPrice struct {
 
 func checkError(err error) {
 	if err != nil {
-		stdErr.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed: ", err)
 	}
 }
 
 func checkDatabaseError(err error, database *sql.DB) {
 	if err != nil {
 		database.Close()
-		stdErr.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed: ", err)
 	}
 }
 
@@ -52,7 +52,7 @@ func checkDatabaseTxError(err error, tx *sql.Tx, database *sql.DB) {
 	if err != nil {
 		tx.Rollback()
 		database.Close()
-		stdErr.Fatal("Security price synchronization failed", err)
+		stdErr.Fatal("Security price synchronization failed: ", err)
 	}
 }
 
@@ -79,9 +79,9 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 		stdOut.Printf("Downloading prices for %v...\n", stockPrice.symbol)
 		resp, err := http.Get("https://query1.finance.yahoo.com/v7/finance/download/" + stockPrice.symbol + "?interval=1d&events=history")
 		checkDatabaseTxError(err, tx, database)
+		defer resp.Body.Close()
 
 		if resp.StatusCode == 200 {
-			defer resp.Body.Close()
 			body, err := ioutil.ReadAll(resp.Body)
 			checkDatabaseTxError(err, tx, database)
 
