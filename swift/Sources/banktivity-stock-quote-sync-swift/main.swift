@@ -90,6 +90,8 @@ func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore
                             )
                         )
                     }
+                } else if (httpResponse.statusCode != 404) {
+                    logger.error("Received bad HTTP response \(httpResponse.statusCode)")
                 }
             }
         }
