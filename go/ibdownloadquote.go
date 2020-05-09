@@ -71,7 +71,6 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 		stdOut.Printf("Downloading prices for %v...\n", stockPrice.symbol)
 		resp, err := http.Get("https://query1.finance.yahoo.com/v7/finance/download/" + stockPrice.symbol + "?interval=1d&events=history")
 		checkDatabaseTxError(err, tx, database)
-		defer resp.Body.Close()
 
 		if resp.StatusCode == 200 {
 			csvReader := csv.NewReader(resp.Body)
@@ -101,7 +100,10 @@ func enrichStockPrice(in chan *StockPrice, out chan *StockPrice, tx *sql.Tx, dat
 					out <- stockPrice
 				}
 			}
+		} else if resp.StatusCode != 404 {
+			stdErr.Printf("Got HTTP %v for %v...\n", resp.StatusCode, stockPrice.symbol)
 		}
+		resp.Body.Close()
 	}
 	out <- nil
 }
