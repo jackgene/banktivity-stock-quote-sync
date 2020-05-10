@@ -167,4 +167,5 @@ if CommandLine.arguments.count == 2 {
     logger.info("Security prices synchronized successfully.")
 } else {
     print("Please specify path to ibank data file.", to: &stdErr)
+    exit(1)
 }
