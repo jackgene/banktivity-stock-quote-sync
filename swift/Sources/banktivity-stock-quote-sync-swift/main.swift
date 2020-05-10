@@ -154,9 +154,9 @@ func persistStockPrices(db: Connection) throws -> Void {
 
 if CommandLine.arguments.count == 2 {
     let iBankDataDir: String = CommandLine.arguments[1]
-    let iBankDataFile: String = "\(iBankDataDir)/accountsData.ibank"
-    logger.info("Processing SQLite file \(iBankDataFile)...")
-    let db = try Connection(iBankDataFile)
+    let sqliteFile: String = "\(iBankDataDir)/accountsData.ibank"
+    logger.info("Processing SQLite file \(sqliteFile)...")
+    let db = try Connection(sqliteFile)
     try db.transaction {
         let securities: [(String, String)] = try readSecurities(db: db)
         logger.info("Found \(securities.capacity) securities...")
