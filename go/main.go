@@ -175,10 +175,10 @@ func persistStockPrice(in chan *StockPrice, inputCount int, tx *sql.Tx, database
 func main() {
 	if len(os.Args) == 2 {
 		iBankDataDir := os.Args[1]
-		iBankDataFile := filepath.Join(iBankDataDir, "accountsData.ibank")
-		stdOut.Printf("Processing SQLite file %v...\n", iBankDataFile)
+		sqliteFile := filepath.Join(iBankDataDir, "accountsData.ibank")
+		stdOut.Printf("Processing SQLite file %v...\n", sqliteFile)
 
-		database, err := sql.Open("sqlite3", iBankDataFile)
+		database, err := sql.Open("sqlite3", sqliteFile)
 		checkDatabaseError(err, database)
 
 		tx, err := database.Begin()
