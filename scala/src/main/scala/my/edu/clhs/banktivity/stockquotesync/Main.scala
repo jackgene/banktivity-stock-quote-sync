@@ -80,7 +80,7 @@ object Main extends App with LazyLogging {
       DBIO.sequence(
         prices.toVector.map {
           case (
-            securityId: String, _: String, date: LocalDate,
+            securityId: String, symbol: String, date: LocalDate,
             open: BigDecimal, high: BigDecimal, low: BigDecimal, close: BigDecimal, vol: Int
             ) =>
             val ibankTimestamp: Long = date.
@@ -101,6 +101,7 @@ object Main extends App with LazyLogging {
                 zdate = ${ibankTimestamp} AND zsecurityid = ${securityId}
             """.flatMap {
               case 0 =>
+                logger.info(s"No existing record for ${symbol}, new row inserted...")
                 sqlu"""
                   INSERT INTO zprice (
                     z_ent, z_opt, zdate, zsecurityid,
@@ -112,6 +113,7 @@ object Main extends App with LazyLogging {
                 """
 
               case nonzero: Int =>
+                logger.info(s"Existing record for ${symbol} updated...")
                 DBIO.successful(nonzero)
             }
         }
