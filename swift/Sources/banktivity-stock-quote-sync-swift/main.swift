@@ -44,7 +44,12 @@ INSERT INTO zprice (
 )
 """
 
-let logger = Logger(label: "banktivity-stock-quote-sync")
+let logger = { () -> Logger in
+    var logger = Logger(label: "banktivity-stock-quote-sync")
+    logger.logLevel = Logger.Level.debug
+
+    return logger
+}()
 var stdErr = FileHandle.standardError
 var stockPrices: [StockPrice] = [StockPrice]() // There's got to be a better way to do this.
 
