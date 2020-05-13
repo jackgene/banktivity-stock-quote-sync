@@ -38,7 +38,7 @@ object Main extends App with LazyLogging {
       http: HttpExt, securityId: String, symbol: String)(
       implicit ec: ExecutionContext, mat: Materializer):
       Future[Option[(String, String, LocalDate, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Int)]] = {
-    logger.info(s"Downloading prices for ${symbol}...")
+    logger.debug(s"Downloading prices for ${symbol}...")
     http.singleRequest(
       HttpRequest(
         uri = s"https://query1.finance.yahoo.com/v7/finance/download/${symbol}?interval=1d&events=history"
@@ -101,7 +101,7 @@ object Main extends App with LazyLogging {
                 zdate = ${ibankTimestamp} AND zsecurityid = ${securityId}
             """.flatMap {
               case 0 =>
-                logger.info(s"No existing record for ${symbol}, new row inserted...")
+                logger.debug(s"No existing prices for ${symbol}, new prices created...")
                 sqlu"""
                   INSERT INTO zprice (
                     z_ent, z_opt, zdate, zsecurityid,
@@ -113,11 +113,25 @@ object Main extends App with LazyLogging {
                 """
 
               case nonzero: Int =>
-                logger.info(s"Existing record for ${symbol} updated...")
+                logger.debug(s"Existing prices for ${symbol} updated...")
                 DBIO.successful(nonzero)
             }
         }
       )
+    }.
+    flatMap { updateCounts: Seq[Int] =>
+      db.run(
+        sqlu"""
+          UPDATE z_primarykey
+          SET z_max = (SELECT MAX(z_pk) FROM zprice)
+          WHERE z_name = 'Price'
+        """
+      ).
+      filter { 1 == _ }.
+      map { _ =>
+        logger.debug("Primary key for price updated...")
+        updateCounts
+      }
     }.
     map { updateCounts: Seq[Int] =>
       logger.info(s"Persisted prices for ${updateCounts.sum} securities...")
