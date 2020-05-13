@@ -18,4 +18,6 @@ Ideas to consider:
 - Use the platform's argument parser to parse arguments.
 - Use the platform's standard configuration format for configurations.
 
-Scala implementation is the reference implementation.
+Swift implementation is the reference implementation for:
+- Log levels and messages
+
