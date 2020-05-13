@@ -14,11 +14,11 @@ struct StockPrice {
     var securityId: String
     var symbol: String
     var date: Date
-    var open: Decimal
+    var volume: Int
+    var close: Decimal
     var high: Decimal
     var low: Decimal
-    var close: Decimal
-    var volume: Int
+    var open: Decimal
 }
 
 let ent = 42
@@ -90,11 +90,11 @@ func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore
                                 securityId: uuid,
                                 symbol: symbol,
                                 date: dateFormatter.date(from: stockPriceCsv["Date"]!)!,
-                                open: Decimal(string: stockPriceCsv["Open"]!)!,
+                                volume: Int(stockPriceCsv["Volume"]!)!,
+                                close: Decimal(string: stockPriceCsv["Close"]!)!,
                                 high: Decimal(string: stockPriceCsv["High"]!)!,
                                 low: Decimal(string: stockPriceCsv["Low"]!)!,
-                                close: Decimal(string: stockPriceCsv["Close"]!)!,
-                                volume: Int(stockPriceCsv["Volume"]!)!
+                                open: Decimal(string: stockPriceCsv["Open"]!)!
                             )
                         )
                     }
