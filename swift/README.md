@@ -11,3 +11,8 @@ Output:
 ```
 .build/release/banktivity-stock-quote-sync-swift
 ```
+
+## Development
+```
+swift package generate-xcodeproj
+```
