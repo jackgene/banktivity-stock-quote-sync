@@ -69,7 +69,7 @@ func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore
     dateFormatter.dateFormat = "yyyy-MM-dd"
     dateFormatter.timeZone = TimeZone(secondsFromGMT: -12 * 60 * 60)
     for (uuid, symbol) in securities {
-        logger.info("Downloading prices for \(symbol)...")
+        logger.debug("Downloading prices for \(symbol)...")
         let url: URL = URL(string: "https://query1.finance.yahoo.com/v7/finance/download/\(symbol)?interval=1d&events=history")!
         let task: URLSessionDataTask = urlSession.dataTask(with: url) {(data, response, error) in
             defer { httpSem.signal() }
@@ -137,9 +137,9 @@ func persistStockPrices(db: Connection) throws -> Void {
                 "\(stockPrice.low)",
                 "\(stockPrice.open)"
             )
-            logger.info("No existing record for \(stockPrice.symbol), new row inserted...")
+            logger.debug("No existing prices for \(stockPrice.symbol), new prices created...")
         } else {
-            logger.info("Existing record for \(stockPrice.symbol) updated...")
+            logger.debug("Existing prices for \(stockPrice.symbol) updated...")
         }
     }
     let count: Int = db.totalChanges - prePersistTotalChanges
@@ -149,6 +149,7 @@ func persistStockPrices(db: Connection) throws -> Void {
         WHERE z_name = 'Price'
         """
     )
+    logger.debug("Primary key for price updated...")
     logger.info("Persisted prices for \(count) securities...")
 }
 
