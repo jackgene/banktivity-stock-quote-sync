@@ -133,7 +133,9 @@ func persistStockPrices(db: Connection) throws -> Void {
             stockPrice.date.timeIntervalSinceReferenceDate,
             stockPrice.securityId
         )
-        if db.totalChanges == changes {
+        if db.totalChanges > changes {
+            logger.debug("Existing entry for \(stockPrice.symbol) updated...")
+        } else {
             try insertStmt.run(
                 ent,
                 opt,
@@ -145,9 +147,7 @@ func persistStockPrices(db: Connection) throws -> Void {
                 "\(stockPrice.low)",
                 "\(stockPrice.open)"
             )
-            logger.debug("No existing prices for \(stockPrice.symbol), new prices created...")
-        } else {
-            logger.debug("Existing prices for \(stockPrice.symbol) updated...")
+            logger.debug("No existing entry for \(stockPrice.symbol), new one created...")
         }
     }
     let count: Int = db.totalChanges - prePersistTotalChanges
