@@ -18,6 +18,8 @@
 #define SELECT_SECURITY_SQL "SELECT zuniqueid, zsymbol FROM zsecurity"
 #define ENT 42
 #define OPT 1
+// Apple epoch (2001-01-01) +12 hours
+// Maximizes chances of iBank displaying the same date for all timezones
 #define IBANK_EPOCH 978292800L
 #define UPDATE_PRICE_SQL "\
 UPDATE zprice \
