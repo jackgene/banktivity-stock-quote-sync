@@ -54,13 +54,16 @@ var stdErr = FileHandle.standardError
 var stockPrices: [StockPrice] = [StockPrice]() // There's got to be a better way to do this.
 
 func readSecurities(db: Connection) throws -> [(String, String)] {
-    return try db.prepare("SELECT zuniqueid, zsymbol FROM zsecurity").compactMap {(row) in
+    let securities: [(String,String)] = try db.prepare("SELECT zuniqueid, zsymbol FROM zsecurity").compactMap {(row) in
         if let securityId = row[0] as? String, let symbol = row[1] as? String {
             return (securityId, symbol)
         } else {
             return nil
         }
     }
+    logger.info("Found \(securities.capacity) securities...")
+
+    return securities
 }
 
 func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore {
@@ -165,7 +168,6 @@ if CommandLine.arguments.count == 2 {
     let db = try Connection(sqliteFile)
     try db.transaction {
         let securities: [(String, String)] = try readSecurities(db: db)
-        logger.info("Found \(securities.capacity) securities...")
         let pricesSem: DispatchSemaphore = try getStockPrices(securities: securities)
         pricesSem.wait()
         try persistStockPrices(db: db)
