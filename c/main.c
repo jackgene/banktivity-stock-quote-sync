@@ -7,14 +7,47 @@
 #include <curl/curl.h>
 #include "log.h"
 
-#define ACCOUNTS_DATA_FILE "/accountsData.ibank"
-#define ERROR_MESSAGE_FORMAT "Security price synchronization failed: %s\n"
-#define PRICE_URL_FORMAT "https://query1.finance.yahoo.com/v7/finance/download/%s?interval=1d&events=history"
-#define MAX_SYMBOL_LEN 4
+// General constants
+#define MAX_SYMBOL_LEN 5
 #define MAX_SECURITY_ID_LEN 36
-#define HTTP_CONCURRENCY 4
-#define MAX_PRICE_URL_LEN sizeof(PRICE_URL_FORMAT) + MAX_SYMBOL_LEN - 1
 #define MAX_NUM_LEN 20
+#define ERROR_MESSAGE_FORMAT "Security price synchronization failed: %s\n"
+
+// Database constants
+#define ACCOUNTS_DATA_FILE "/accountsData.ibank"
+#define SELECT_SECURITY_SQL "SELECT zuniqueid, zsymbol FROM zsecurity"
+#define ENT 42
+#define OPT 1
+#define IBANK_EPOCH 978292800L
+#define UPDATE_PRICE_SQL "\
+UPDATE zprice \
+SET\
+    zvolume = ?,\
+    zclosingprice = ?,\
+    zhighprice = ?,\
+    zlowprice = ?,\
+    zopeningprice = ? \
+WHERE\
+    z_ent = ? AND z_opt = ? AND \
+    zdate = ? AND zsecurityid = ?"
+#define UPDATE_PRICE_SQL_LEN sizeof(UPDATE_PRICE_SQL)
+#define INSERT_PRICE_SQL "\
+INSERT INTO zprice (\
+    z_ent, z_opt, zdate, zsecurityid,\
+    zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice\
+) VALUES (\
+    ?, ?, ?, ?, ?, ?, ?, ?, ?\
+)"
+#define INSERT_PRICE_SQL_LEN sizeof(INSERT_PRICE_SQL)
+#define UPDATE_PK_SQL "\
+UPDATE z_primarykey \
+SET z_max = (SELECT MAX(z_pk) FROM zprice) \
+WHERE z_name = 'Price'"
+
+// HTTP constants
+#define HTTP_CONCURRENCY 24
+#define PRICE_URL_FORMAT "https://query1.finance.yahoo.com/v7/finance/download/%s?interval=1d&events=history"
+#define MAX_PRICE_URL_LEN sizeof(PRICE_URL_FORMAT) + MAX_SYMBOL_LEN - 1
 #define CSV_HEADER "Date,Open,High,Low,Close,Adj Close,Volume"
 
 #define LOAD_STATE_VERIFY_HEADER 0
@@ -33,11 +66,11 @@ typedef struct stock_prices {
     char security_id[37];
     char symbol[MAX_SYMBOL_LEN + 1];
     struct tm date;
-    char open[21];
+    int volume;
+    char close[21];
     char high[21];
     char low[21];
-    char close[21];
-    int volume;
+    char open[21];
     int load_state;
     CURL *curl;
     struct stock_prices *next;
@@ -78,8 +111,7 @@ static int read_securities(sqlite3 *db, int *count, stock_prices **prices) {
     int sqlite_ret;
     char *sqlite_err;
 
-    sqlite_ret = sqlite3_exec(db,
-                              "SELECT zuniqueid, zsymbol FROM zsecurity",
+    sqlite_ret = sqlite3_exec(db, SELECT_SECURITY_SQL,
                               process_security_select_row_sqlite_cb,
                               &builder, &sqlite_err);
     if (sqlite_ret == SQLITE_OK) {
@@ -87,12 +119,12 @@ static int read_securities(sqlite3 *db, int *count, stock_prices **prices) {
         *prices = builder.first;
         log_info("Found %d securities...", *count);
 
-        return 0;
+        return EXIT_SUCCESS;
     } else {
         log_error(ERROR_MESSAGE_FORMAT, sqlite_err);
         sqlite3_free(sqlite_err);
 
-        return 1;
+        return EXIT_FAILURE;
     }
 }
 
@@ -213,7 +245,9 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state = LOAD_STATE_VOLUME;
                     }
                 } else {
-                    if (body[i] >= '0' && body[i] <= '9') {
+                    if (body[i] == '\n') {
+                        break;
+                    } else if (body[i] >= '0' && body[i] <= '9') {
                         price->volume = price->volume * 10 + body[i] - '0';
                     } else {
                         body[n*l] = '\0';
@@ -231,31 +265,134 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
     return n*l;
 }
 
-static int populate_stock_prices(stock_prices *prices) {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    CURL *curl = curl_easy_init();
+static void submit_price_request_curl(CURLM *curl_multi, stock_prices *prices) {
+    CURL *curl_easy = curl_easy_init();
+    prices->curl = curl_easy;
+    char *symbol = prices->symbol;
     char url[MAX_PRICE_URL_LEN];
-    char *symbol;
+    sprintf(url, PRICE_URL_FORMAT, symbol);
+    curl_easy_setopt(curl_easy, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl_easy, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+    curl_easy_setopt(curl_easy, CURLOPT_URL, url);
+    curl_easy_setopt(curl_easy, CURLOPT_WRITEFUNCTION, process_price_request_curl_cb);
+    curl_easy_setopt(curl_easy, CURLOPT_WRITEDATA, prices);
+    curl_multi_add_handle(curl_multi, curl_easy);
+}
+
+static int populate_stock_prices(stock_prices *prices) {
+    // Async HTTP calls, largely based on:
+    // https://curl.haxx.se/libcurl/c/10-at-a-time.html
+    CURLM *curl_multi;
+    CURLMsg *msg;
+    int msgs_left = -1;
+    int active_connections = 1;
+
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl_multi = curl_multi_init();
+    curl_multi_setopt(curl_multi, CURLMOPT_MAXCONNECTS, (long)HTTP_CONCURRENCY);
+    curl_multi_setopt(curl_multi, CURLOPT_TCP_FASTOPEN, 1L);
 
     while (prices != NULL) {
-        prices->curl = curl;
-        symbol = prices->symbol;
-        sprintf(url, PRICE_URL_FORMAT, symbol);
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, process_price_request_curl_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, prices);
-        if (curl_easy_perform(curl) != CURLE_OK) {
-            log_error(ERROR_MESSAGE_FORMAT, "HTTP error downloading stock price");
-            return 1;
+        log_debug("Downloading prices for %s...", prices->symbol);
+        submit_price_request_curl(curl_multi, prices);
+        prices = prices->next;
+    }
+
+    do {
+        curl_multi_perform(curl_multi, &active_connections);
+        
+        while ((msg = curl_multi_info_read(curl_multi, &msgs_left))) {
+            if (msg->msg == CURLMSG_DONE) {
+                CURL *curl_easy = msg->easy_handle;
+                curl_multi_remove_handle(curl_multi, curl_easy);
+                curl_easy_cleanup(curl_easy);
+            } else {
+                log_error("HTTP error CURLMsg (%d)\n", msg->msg);
+            }
+        }
+        if (active_connections)
+            curl_multi_wait(curl_multi, NULL, 0, 20, NULL);
+        
+    } while (active_connections);
+
+    curl_multi_cleanup(curl_multi);
+    curl_global_cleanup();
+
+    return EXIT_SUCCESS;
+}
+
+// Seconds since Apple epoch - 12 hours
+static long ibank_time(struct tm *date) {
+    return mktime(date) - IBANK_EPOCH;
+}
+
+static int persist_stock_prices(sqlite3 *db, stock_prices *prices) {
+    int count = 0;
+    int sqlite_ret;
+    char *sqlite_err;
+    sqlite3_stmt *update_stmt, *insert_stmt;
+
+    sqlite3_prepare_v2(db, UPDATE_PRICE_SQL, UPDATE_PRICE_SQL_LEN, &update_stmt, NULL);
+    sqlite3_prepare_v2(db, INSERT_PRICE_SQL, INSERT_PRICE_SQL_LEN, &insert_stmt, NULL);
+    while (prices != NULL) {
+        if (prices->load_state == LOAD_STATE_VOLUME) {
+            sqlite3_bind_int(update_stmt, 1, prices->volume);
+            sqlite3_bind_text(update_stmt, 2, prices->close, -1, SQLITE_STATIC);
+            sqlite3_bind_text(update_stmt, 3, prices->high, -1, SQLITE_STATIC);
+            sqlite3_bind_text(update_stmt, 4, prices->low, -1, SQLITE_STATIC);
+            sqlite3_bind_text(update_stmt, 5, prices->open, -1, SQLITE_STATIC);
+            sqlite3_bind_int(update_stmt, 6, ENT);
+            sqlite3_bind_int(update_stmt, 7, OPT);
+            sqlite3_bind_int64(update_stmt, 8, ibank_time(&prices->date));
+            sqlite3_bind_text(update_stmt, 9, prices->security_id, -1, SQLITE_STATIC);
+            sqlite_ret = sqlite3_step(update_stmt);
+            if (sqlite_ret == SQLITE_DONE) {
+                if (sqlite3_changes(db) > 0) {
+                    count++;
+                    log_debug("Existing entry for %s updated...", prices->symbol);
+                } else {
+                    sqlite3_bind_int(insert_stmt, 1, ENT);
+                    sqlite3_bind_int(insert_stmt, 2, OPT);
+                    sqlite3_bind_int64(insert_stmt, 3, ibank_time(&prices->date));
+                    sqlite3_bind_text(insert_stmt, 4, prices->security_id, -1, SQLITE_STATIC);
+                    sqlite3_bind_int(insert_stmt, 5, prices->volume);
+                    sqlite3_bind_text(insert_stmt, 6, prices->close, -1, SQLITE_STATIC);
+                    sqlite3_bind_text(insert_stmt, 7, prices->high, -1, SQLITE_STATIC);
+                    sqlite3_bind_text(insert_stmt, 8, prices->low, -1, SQLITE_STATIC);
+                    sqlite3_bind_text(insert_stmt, 9, prices->open, -1, SQLITE_STATIC);
+                    sqlite_ret = sqlite3_step(insert_stmt);
+                    if (sqlite_ret == SQLITE_DONE) {
+                        count++;
+                        log_debug("New entry for %s created...", prices->symbol);
+                        sqlite3_reset(insert_stmt);
+                    } else {
+                        log_error("Price insert for %s failed (step code: %d)", prices->symbol, sqlite_ret);
+                    }
+                }
+                sqlite3_reset(update_stmt);
+            } else {
+                log_error("Price update for %s failed (step code: %d)", prices->symbol, sqlite_ret);
+            }
         }
         prices = prices->next;
     }
-    curl_global_cleanup();
 
-    return 0;
+    sqlite_ret = sqlite3_exec(db, UPDATE_PK_SQL,
+                              NULL, NULL, &sqlite_err);
+    if (sqlite_ret == SQLITE_OK) {
+        log_debug("Primary key for price updated...");
+        log_info("Persisted prices for %d securities...", count);
+
+        return EXIT_SUCCESS;
+    } else {
+        log_error(ERROR_MESSAGE_FORMAT, sqlite_err);
+        sqlite3_free(sqlite_err);
+
+        return EXIT_FAILURE;
+    }
 }
 
-static void free_stock_prices(stock_prices* prices) {
+static void free_stock_prices(stock_prices *prices) {
     if (prices->next != NULL) free_stock_prices(prices->next);
     free(prices);
 }
@@ -278,19 +415,10 @@ int main(int argc, char **argv) {
         log_info("Processing SQLite file %s...", sqlite_file);
         sqlite_ret = sqlite3_open(sqlite_file, &db);
         if (sqlite_ret == SQLITE_OK) {
-            if (read_securities(db, &read_count, &prices) == 0) {
-                if (populate_stock_prices(prices) == 0) {
-                    stock_prices *wtf = prices;
-                    while (wtf != NULL) {
-                        log_info("%s (%s) - %s/%s/%s/%s/%d",
-                                 wtf->security_id,
-                                 wtf->symbol,
-                                 wtf->open,
-                                 wtf->high,
-                                 wtf->low,
-                                 wtf->close,
-                                 wtf->volume);
-                        wtf = wtf->next;
+            if (read_securities(db, &read_count, &prices) == EXIT_SUCCESS) {
+                if (populate_stock_prices(prices) == EXIT_SUCCESS) {
+                    if (persist_stock_prices(db, prices) == EXIT_SUCCESS) {
+                        log_info("Security prices synchronized successfully.");
                     }
                 }
 
@@ -304,6 +432,6 @@ int main(int argc, char **argv) {
         free(sqlite_file);
     } else {
         fprintf(stderr, "Please specify path to ibank data file.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
 }
