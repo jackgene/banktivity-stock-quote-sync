@@ -101,7 +101,7 @@ object Main extends App with LazyLogging {
                 zdate = ${ibankTimestamp} AND zsecurityid = ${securityId}
             """.flatMap {
               case 0 =>
-                logger.debug(s"No existing prices for ${symbol}, new prices created...")
+                logger.debug(s"New entry for ${symbol} created...")
                 sqlu"""
                   INSERT INTO zprice (
                     z_ent, z_opt, zdate, zsecurityid,
@@ -113,7 +113,7 @@ object Main extends App with LazyLogging {
                 """
 
               case nonzero: Int =>
-                logger.debug(s"Existing prices for ${symbol} updated...")
+                logger.debug(s"Existing entry for ${symbol} updated...")
                 DBIO.successful(nonzero)
             }
         }
