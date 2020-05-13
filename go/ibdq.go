@@ -151,9 +151,9 @@ func persistStockPrice(in chan *StockPrice, inputCount int, tx *sql.Tx, database
 					)`,
 					ent, opt, secondsSinceAppleEpoch(stockPrice.date), stockPrice.securityId, stockPrice.volume, stockPrice.close, stockPrice.high, stockPrice.low, stockPrice.open)
 				checkDatabaseTxError(err, tx, database)
-				stdOut.Printf("No existing prices for %v, new prices created...\n", stockPrice.symbol)
+				stdOut.Printf("New entry for %v created...\n", stockPrice.symbol)
 			} else {
-				stdOut.Printf("Existing prices for %v updated...\n", stockPrice.symbol)
+				stdOut.Printf("Existing entry for %v updated...\n", stockPrice.symbol)
 			}
 			count += 1
 		}
