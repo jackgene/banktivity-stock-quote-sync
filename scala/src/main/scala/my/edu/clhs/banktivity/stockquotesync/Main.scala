@@ -84,8 +84,8 @@ object Main extends App with LazyLogging {
             open: BigDecimal, high: BigDecimal, low: BigDecimal, close: BigDecimal, vol: Int
             ) =>
             val ibankTimestamp: Long = date.
-              minusYears(31).plusDays(1).
-              atStartOfDay(ZoneId.ofOffset("", ZoneOffset.ofHours(3))).
+              minusYears(31).
+              atStartOfDay(ZoneId.ofOffset("", ZoneOffset.ofHours(-12))).
               toEpochSecond
 
             sqlu"""
