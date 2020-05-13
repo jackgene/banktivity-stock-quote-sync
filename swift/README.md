@@ -1,3 +1,13 @@
-# banktivity-stock-quote-sync-swift
+## Build
+Pre-requisites:
+- Xcode (alternatively - https://swift.org/download/)
 
-A description of this package.
+Command:
+```
+swift build -c release
+```
+
+Output:
+```
+.build/release/banktivity-stock-quote-sync-swift
+```
