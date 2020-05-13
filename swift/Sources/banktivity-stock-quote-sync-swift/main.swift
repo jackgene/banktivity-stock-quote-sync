@@ -147,7 +147,7 @@ func persistStockPrices(db: Connection) throws -> Void {
                 "\(stockPrice.low)",
                 "\(stockPrice.open)"
             )
-            logger.debug("No existing entry for \(stockPrice.symbol), new one created...")
+            logger.debug("New entry for \(stockPrice.symbol) created...")
         }
     }
     let count: Int = db.totalChanges - prePersistTotalChanges
