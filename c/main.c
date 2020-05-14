@@ -401,8 +401,8 @@ static void free_stock_prices(stock_prices *prices) {
 
 int main(int argc, char **argv) {
     int exit = EXIT_FAILURE;
-    struct timespec start_spec, end_spec;
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_spec);
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
     if (argc == 2) {
         stock_prices *prices = NULL;
@@ -438,11 +438,11 @@ int main(int argc, char **argv) {
         free(sqlite_file);
 
         if (exit == EXIT_SUCCESS) {
-            clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end_spec);
+            struct timespec end;
+            clock_gettime(CLOCK_MONOTONIC, &end);
             double elapsed_secs =
-            end_spec.tv_sec - start_spec.tv_sec +
-            (end_spec.tv_nsec - start_spec.tv_nsec) / 1.0e9;
-
+                end.tv_sec - start.tv_sec +
+                (end.tv_nsec - start.tv_nsec) / 1.0e9;
             log_info("Security prices synchronized in %.3fs.", elapsed_secs);
         }
         return exit;
