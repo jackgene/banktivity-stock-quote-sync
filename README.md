@@ -5,8 +5,9 @@ The purpose of this simple application is to evaluate the implementation of
 some basic functionality in a variety of programming languages.
 
 Every implementation should perform the following:
-- Take the path to the .ibank data file from the first command line argument.
-- Read stock symbols from the `ZSECURITY` SQLite table.
+- Take the path to the .ibank data dir from the first command line argument.
+- Open accountsData.ibank within directory as a SQLite database.
+- Read stock symbols from the `ZSECURITY` table.
 - Make HTTP requests to download stock prices concurrently (4 at a time max).
 - Parse response as CSV.
 - Update the following SQLite tables in a single transaction:
