@@ -21,6 +21,7 @@ struct StockPrice {
     var open: Decimal
 }
 
+let startSecs = Date().timeIntervalSinceReferenceDate
 let ent = 42
 let opt = 1
 let updateSql = """
@@ -172,7 +173,8 @@ if CommandLine.arguments.count == 2 {
         pricesSem.wait()
         try persistStockPrices(db: db)
     }
-    logger.info("Security prices synchronized successfully.")
+    let elapsedSecs = Date().timeIntervalSinceReferenceDate - startSecs
+    logger.info("Security prices synchronized in \(String(format: "%.3f", elapsedSecs))s.")
 } else {
     print("Please specify path to ibank data file.", to: &stdErr)
     exit(1)

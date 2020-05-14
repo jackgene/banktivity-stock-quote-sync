@@ -173,6 +173,8 @@ func persistStockPrice(in chan *StockPrice, inputCount int, tx *sql.Tx, database
 }
 
 func main() {
+	start := time.Now()
+
 	if len(os.Args) == 2 {
 		iBankDataDir := os.Args[1]
 		sqliteFile := filepath.Join(iBankDataDir, "accountsData.ibank")
@@ -196,7 +198,7 @@ func main() {
 
 		tx.Commit()
 		database.Close()
-		stdOut.Println("Security prices synchronized successfully.")
+		stdOut.Printf("Security prices synchronized in %.3fs.", time.Since(start).Seconds())
 	} else {
 		stdErr.Fatal("Please specify path to ibank data file.")
 	}

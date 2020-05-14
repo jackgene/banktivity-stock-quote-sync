@@ -400,6 +400,10 @@ static void free_stock_prices(stock_prices *prices) {
 }
 
 int main(int argc, char **argv) {
+    int exit = EXIT_FAILURE;
+    struct timespec start_spec, end_spec;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_spec);
+
     if (argc == 2) {
         stock_prices *prices = NULL;
         int read_count = 0;
@@ -420,7 +424,7 @@ int main(int argc, char **argv) {
             if (read_securities(db, &read_count, &prices) == EXIT_SUCCESS) {
                 if (populate_stock_prices(prices) == EXIT_SUCCESS) {
                     if (persist_stock_prices(db, prices) == EXIT_SUCCESS) {
-                        log_info("Security prices synchronized successfully.");
+                        exit = EXIT_SUCCESS;
                     }
                 }
 
@@ -432,6 +436,16 @@ int main(int argc, char **argv) {
 
         sqlite3_close(db);
         free(sqlite_file);
+
+        if (exit == EXIT_SUCCESS) {
+            clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end_spec);
+            double elapsed_secs =
+            end_spec.tv_sec - start_spec.tv_sec +
+            (end_spec.tv_nsec - start_spec.tv_nsec) / 1.0e9;
+
+            log_info("Security prices synchronized in %.3fs.", elapsed_secs);
+        }
+        return exit;
     } else {
         fprintf(stderr, "Please specify path to ibank data file.\n");
         return EXIT_FAILURE;

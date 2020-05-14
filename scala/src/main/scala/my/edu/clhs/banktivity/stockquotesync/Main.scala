@@ -15,6 +15,7 @@ import slick.jdbc.SQLiteProfile.backend.Database
 import scala.concurrent._
 
 object Main extends App with LazyLogging {
+  val startMillis: Long = System.currentTimeMillis()
   // Sample CSV output:
   // Date,Open,High,Low,Close,Adj Close,Volume
   // 2020-03-19,1093.050049,1094.000000,1060.107544,1078.910034,1078.910034,333575
@@ -164,7 +165,10 @@ object Main extends App with LazyLogging {
             ).
             map(_.flatten)
           _ <- persistPrices(db, prices)
-        } yield logger.info("Security prices synchronized successfully.")
+        } yield {
+          val elapsedSecs: Double = (System.currentTimeMillis() - startMillis) / 1000.0
+          logger.info(f"Security prices synchronized in ${elapsedSecs}%.3fs.")
+        }
       ).
       recoverWith {
         case t: Throwable =>
