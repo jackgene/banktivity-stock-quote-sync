@@ -268,6 +268,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
 }
 
 static void submit_price_request_curl(CURLM *curl_multi, stock_prices *prices) {
+    log_debug("Downloading prices for %s...", prices->symbol);
     CURL *curl_easy = curl_easy_init();
     prices->curl = curl_easy;
     char *symbol = prices->symbol;
@@ -294,7 +295,6 @@ static int populate_stock_prices(stock_prices *prices) {
     curl_multi_setopt(curl_multi, CURLOPT_TCP_FASTOPEN, 1L);
 
     while (prices != NULL) {
-        log_debug("Downloading prices for %s...", prices->symbol);
         submit_price_request_curl(curl_multi, prices);
         prices = prices->next;
     }
