@@ -10,12 +10,12 @@
 // General constants
 #define MAX_SYMBOL_LEN 5
 #define MAX_SECURITY_ID_LEN 36
-#define MAX_NUM_LEN 20
+#define MAX_NUM_LEN 19
 #define ERROR_MESSAGE_FORMAT "Security price synchronization failed: %s\n"
 
 // Database constants
 #define ACCOUNTS_DATA_FILE "/accountsData.ibank"
-#define SELECT_SECURITY_SQL "SELECT zuniqueid, zsymbol FROM zsecurity"
+#define SELECT_SECURITY_SQL "SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= 5"
 #define ENT 42
 #define OPT 1
 // Apple epoch (2001-01-01) +12 hours
@@ -47,7 +47,7 @@ SET z_max = (SELECT MAX(z_pk) FROM zprice) \
 WHERE z_name = 'Price'"
 
 // HTTP constants
-#define HTTP_CONCURRENCY 24
+#define HTTP_CONCURRENCY 4
 #define PRICE_URL_FORMAT "https://query1.finance.yahoo.com/v7/finance/download/%s?interval=1d&events=history"
 #define MAX_PRICE_URL_LEN sizeof(PRICE_URL_FORMAT) + MAX_SYMBOL_LEN - 1
 #define CSV_HEADER "Date,Open,High,Low,Close,Adj Close,Volume"
@@ -65,14 +65,14 @@ WHERE z_name = 'Price'"
 #define LOAD_STATE_FAILED -1
 
 typedef struct stock_prices {
-    char security_id[37];
-    char symbol[MAX_SYMBOL_LEN + 1];
+    char security_id[40];
+    char symbol[8];
     struct tm date;
     int volume;
-    char close[21];
-    char high[21];
-    char low[21];
-    char open[21];
+    char close[24];
+    char high[24];
+    char low[24];
+    char open[24];
     int load_state;
     CURL *curl;
     struct stock_prices *next;
@@ -137,7 +137,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
 
     if (http_status == 200) {
         if (price->load_state >= LOAD_STATE_VERIFY_HEADER) {
-            for (int i = 0; i < l; i ++) {
+            for (int i = 0; i < l; i++) {
                 if (price->load_state < LOAD_STATE_DATE_YEAR) {
                     if (price->load_state == LOAD_STATE_VERIFY_HEADER + sizeof(CSV_HEADER) - 1 &&
                             body[i] == '\n') {
@@ -274,7 +274,6 @@ static void submit_price_request_curl(CURLM *curl_multi, stock_prices *prices) {
     char url[MAX_PRICE_URL_LEN];
     sprintf(url, PRICE_URL_FORMAT, symbol);
     curl_easy_setopt(curl_easy, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl_easy, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     curl_easy_setopt(curl_easy, CURLOPT_URL, url);
     curl_easy_setopt(curl_easy, CURLOPT_WRITEFUNCTION, process_price_request_curl_cb);
     curl_easy_setopt(curl_easy, CURLOPT_WRITEDATA, prices);
