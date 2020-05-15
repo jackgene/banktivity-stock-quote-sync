@@ -54,16 +54,17 @@ WHERE z_name = 'Price'"
 #define HTTP_DATA_VERIFY_ERR_MSG_FMT "Failed to verify HTTP data - bad CSV header index %d (%d of chunk):\n%s"
 #define HTTP_DATA_PARSE_ERR_MSG_FMT "Failed to parse %s from HTTP data for %s at index %d:\n%s"
 
-#define LOAD_STATE_VERIFY_HEADER 0
-#define LOAD_STATE_DATE_YEAR 100
-#define LOAD_STATE_DATE_MON 101
-#define LOAD_STATE_DATE_MDAY 102
-#define LOAD_STATE_OPEN 200
-#define LOAD_STATE_HIGH 300
-#define LOAD_STATE_LOW 400
-#define LOAD_STATE_CLOSE 500
-#define LOAD_STATE_ADJCLOSE 600
-#define LOAD_STATE_VOLUME 700
+#define LOAD_STATE_VERIFY_HEADER 100
+#define LOAD_STATE_DATE_YEAR 200
+#define LOAD_STATE_DATE_MON 201
+#define LOAD_STATE_DATE_MDAY 202
+#define LOAD_STATE_OPEN 300
+#define LOAD_STATE_HIGH 400
+#define LOAD_STATE_LOW 500
+#define LOAD_STATE_CLOSE 600
+#define LOAD_STATE_ADJCLOSE 700
+#define LOAD_STATE_VOLUME 800
+#define LOAD_STATE_SUCCESS 0
 #define LOAD_STATE_FAILED -1
 
 typedef struct stock_prices {
@@ -250,6 +251,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                     }
                 } else {
                     if (body[i] == '\n') {
+                        price->load_state = LOAD_STATE_SUCCESS;
                         break;
                     } else if (body[i] >= '0' && body[i] <= '9') {
                         price->volume = price->volume * 10 + body[i] - '0';
@@ -338,7 +340,7 @@ static int persist_stock_prices(sqlite3 *db, stock_prices *prices) {
     sqlite3_prepare_v2(db, UPDATE_PRICE_SQL, UPDATE_PRICE_SQL_LEN, &update_stmt, NULL);
     sqlite3_prepare_v2(db, INSERT_PRICE_SQL, INSERT_PRICE_SQL_LEN, &insert_stmt, NULL);
     while (prices != NULL) {
-        if (prices->load_state == LOAD_STATE_VOLUME) {
+        if (prices->load_state == LOAD_STATE_SUCCESS || prices->load_state == LOAD_STATE_VOLUME) {
             sqlite3_bind_int(update_stmt, 1, prices->volume);
             sqlite3_bind_text(update_stmt, 2, prices->close, -1, SQLITE_STATIC);
             sqlite3_bind_text(update_stmt, 3, prices->high, -1, SQLITE_STATIC);
