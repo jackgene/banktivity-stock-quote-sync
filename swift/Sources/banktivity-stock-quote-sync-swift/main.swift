@@ -22,6 +22,11 @@ struct StockPrice {
 }
 
 let startSecs = Date().timeIntervalSinceReferenceDate
+
+// General constants
+let maxSymbolLength = 5
+
+// Database constants
 let ent = 42
 let opt = 1
 let updateSql = """
@@ -45,6 +50,9 @@ INSERT INTO zprice (
 )
 """
 
+// HTTP constants
+let httpConcurrency = 4
+
 let logger = { () -> Logger in
     var logger = Logger(label: "banktivity-stock-quote-sync")
     logger.logLevel = Logger.Level.debug
@@ -55,13 +63,15 @@ var stdErr = FileHandle.standardError
 var stockPrices: [StockPrice] = [StockPrice]() // There's got to be a better way to do this.
 
 func readSecurities(db: Connection) throws -> [(String, String)] {
-    let securities: [(String,String)] = try db.prepare("SELECT zuniqueid, zsymbol FROM zsecurity").compactMap {(row) in
-        if let securityId = row[0] as? String, let symbol = row[1] as? String {
-            return (securityId, symbol)
-        } else {
-            return nil
+    let securities: [(String,String)] = try db
+        .prepare("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= \(maxSymbolLength)")
+        .compactMap {(row) in
+            if let securityId = row[0] as? String, let symbol = row[1] as? String {
+                return (securityId, symbol)
+            } else {
+                return nil
+            }
         }
-    }
     logger.info("Found \(securities.capacity) securities...")
 
     return securities
@@ -71,7 +81,7 @@ func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore
     let doneSem: DispatchSemaphore = DispatchSemaphore(value: 0)
     let httpSem: DispatchSemaphore = DispatchSemaphore(value: 0)
     let urlSessionCfg = URLSessionConfiguration.ephemeral
-    urlSessionCfg.httpMaximumConnectionsPerHost = 4
+    urlSessionCfg.httpMaximumConnectionsPerHost = httpConcurrency
     let urlSession = URLSession(configuration: urlSessionCfg)
     let dateFormatter = DateFormatter()
     dateFormatter.locale = Locale(identifier: "en_US_POSIX") // set locale to reliable US_POSIX
