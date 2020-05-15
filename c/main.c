@@ -51,6 +51,8 @@ WHERE z_name = 'Price'"
 #define PRICE_URL_FORMAT "https://query1.finance.yahoo.com/v7/finance/download/%s?interval=1d&events=history"
 #define MAX_PRICE_URL_LEN sizeof(PRICE_URL_FORMAT) + MAX_SYMBOL_LEN - 1
 #define CSV_HEADER "Date,Open,High,Low,Close,Adj Close,Volume"
+#define HTTP_DATA_VERIFY_ERR_MSG_FMT "Failed to verify HTTP data - bad CSV header index %d (%d of chunk):\n%s"
+#define HTTP_DATA_PARSE_ERR_MSG_FMT "Failed to parse %s from HTTP data for %s at index %d:\n%s"
 
 #define LOAD_STATE_VERIFY_HEADER 0
 #define LOAD_STATE_DATE_YEAR 100
@@ -137,7 +139,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
 
     if (http_status == 200) {
         if (price->load_state >= LOAD_STATE_VERIFY_HEADER) {
-            for (int i = 0; i < l; i++) {
+            for (int i = 0; i < l; i += n) {
                 if (price->load_state < LOAD_STATE_DATE_YEAR) {
                     if (price->load_state == LOAD_STATE_VERIFY_HEADER + sizeof(CSV_HEADER) - 1 &&
                             body[i] == '\n') {
@@ -147,7 +149,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state++;
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - bad CSV header index %d\n%s", price->load_state - LOAD_STATE_VERIFY_HEADER, body);
+                        log_error(HTTP_DATA_VERIFY_ERR_MSG_FMT, price->load_state - LOAD_STATE_VERIFY_HEADER, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -159,7 +161,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->date.tm_year = price->date.tm_year * 10 + body[i] - '0';
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - date - year\n%s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "date.year", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -171,7 +173,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->date.tm_mon = price->date.tm_mon * 10 + body[i] - '0';
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - date - mon\n%s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "date.mon", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -182,7 +184,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->date.tm_mday = price->date.tm_mday * 10 + body[i] - '0';
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - date - mday\n%s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "date.mday", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -196,7 +198,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state++;
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - open %s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "open", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -210,7 +212,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state++;
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - high %s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "high", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -224,7 +226,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state++;
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - low %s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "low", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -238,7 +240,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->load_state++;
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - close %s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "close", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
@@ -253,7 +255,7 @@ static size_t process_price_request_curl_cb(char *body, size_t n, size_t l, void
                         price->volume = price->volume * 10 + body[i] - '0';
                     } else {
                         body[n*l] = '\0';
-                        log_error("Failed to verify HTTP data - volume %s", body);
+                        log_error(HTTP_DATA_PARSE_ERR_MSG_FMT, "volume", price->symbol, i, body);
                         price->load_state = LOAD_STATE_FAILED;
                         break;
                     }
