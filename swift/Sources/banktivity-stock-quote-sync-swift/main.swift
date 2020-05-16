@@ -82,6 +82,7 @@ func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore
     let httpSem: DispatchSemaphore = DispatchSemaphore(value: 0)
     let urlSessionCfg = URLSessionConfiguration.ephemeral
     urlSessionCfg.httpMaximumConnectionsPerHost = httpConcurrency
+    urlSessionCfg.httpShouldUsePipelining = true
     let urlSession = URLSession(configuration: urlSessionCfg)
     let dateFormatter = DateFormatter()
     dateFormatter.locale = Locale(identifier: "en_US_POSIX") // set locale to reliable US_POSIX
