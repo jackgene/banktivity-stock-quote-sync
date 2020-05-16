@@ -286,7 +286,7 @@ static void submit_price_request_curl(CURLM *curl_multi, stock_prices *prices) {
     curl_multi_add_handle(curl_multi, curl_easy);
 }
 
-static int populate_stock_prices(stock_prices *prices) {
+static int enrich_stock_prices(stock_prices *prices) {
     // Async HTTP calls, largely based on:
     // https://curl.haxx.se/libcurl/c/10-at-a-time.html
     CURLM *curl_multi;
@@ -428,7 +428,7 @@ int main(int argc, char **argv) {
         sqlite_ret = sqlite3_open(sqlite_file, &db);
         if (sqlite_ret == SQLITE_OK) {
             if (read_securities(db, &read_count, &prices) == EXIT_SUCCESS) {
-                if (populate_stock_prices(prices) == EXIT_SUCCESS) {
+                if (enrich_stock_prices(prices) == EXIT_SUCCESS) {
                     if (persist_stock_prices(db, prices) == EXIT_SUCCESS) {
                         exit = EXIT_SUCCESS;
                     }
