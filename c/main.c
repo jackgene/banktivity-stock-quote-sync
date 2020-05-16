@@ -278,7 +278,8 @@ static void submit_price_request_curl(CURLM *curl_multi, stock_prices *prices) {
     char *symbol = prices->symbol;
     char url[MAX_PRICE_URL_LEN];
     sprintf(url, PRICE_URL_FORMAT, symbol);
-    curl_easy_setopt(curl_easy, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl_easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS);
+    curl_easy_setopt(curl_easy, CURLOPT_TCP_FASTOPEN, 1L);
     curl_easy_setopt(curl_easy, CURLOPT_URL, url);
     curl_easy_setopt(curl_easy, CURLOPT_WRITEFUNCTION, process_price_request_curl_cb);
     curl_easy_setopt(curl_easy, CURLOPT_WRITEDATA, prices);
@@ -293,10 +294,11 @@ static int populate_stock_prices(stock_prices *prices) {
     int msgs_left = -1;
     int active_connections = 1;
 
+    log_trace("Using %s", curl_version());
     curl_global_init(CURL_GLOBAL_ALL);
     curl_multi = curl_multi_init();
-    curl_multi_setopt(curl_multi, CURLMOPT_MAXCONNECTS, (long)HTTP_CONCURRENCY);
-    curl_multi_setopt(curl_multi, CURLOPT_TCP_FASTOPEN, 1L);
+    curl_multi_setopt(curl_multi, CURLMOPT_MAX_TOTAL_CONNECTIONS, (long)HTTP_CONCURRENCY);
+    curl_multi_setopt(curl_multi, CURLMOPT_PIPELINING, CURLPIPE_HTTP1|CURLPIPE_MULTIPLEX);
 
     while (prices != NULL) {
         submit_price_request_curl(curl_multi, prices);
@@ -415,7 +417,8 @@ int main(int argc, char **argv) {
         sqlite3 *db;
         int sqlite_ret;
 
-        log_set_quiet(true);
+        log_set_level(LOG_DEBUG);
+        log_set_quiet(true); // Don't log to stderr
         log_set_fp(stdout);
         ibank_data_dir = argv[1];
         sqlite_file = malloc(strlen(ibank_data_dir) + sizeof(ACCOUNTS_DATA_FILE));
