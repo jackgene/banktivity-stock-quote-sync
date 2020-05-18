@@ -72,7 +72,7 @@ func readSecurities(db: Connection) throws -> [(String, String)] {
                 return nil
             }
         }
-    logger.info("Found \(securities.capacity) securities...")
+    logger.info("Found \(securities.count) securities...")
 
     return securities
 }
