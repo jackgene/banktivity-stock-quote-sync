@@ -14,16 +14,9 @@ import java.util.*
 @AutomaticFeature
 class JNIReflectionClasses : Feature {
     /**
-     * All classes defined here will have reflection support and be registered as spring beans
-     */
-    fun getBeans(): Array<Class<*>> {
-        return arrayOf()
-    }
-
-    /**
      * All classes defined here will have reflection support
      */
-    fun getClasses(): Array<Class<*>> {
+    private fun getClasses(): Array<Class<*>> {
         return arrayOf(
                 NativeDB::class.java,
                 Function::class.java,
@@ -61,12 +54,9 @@ class JNIReflectionClasses : Feature {
         }
     }
 
-    fun setupClasses() {
+    private fun setupClasses() {
         try {
             println("> Loading classes for future reflection support")
-            for (clazz in getBeans()) {
-                process(clazz)
-            }
             for (clazz in getClasses()) {
                 process(clazz)
             }
