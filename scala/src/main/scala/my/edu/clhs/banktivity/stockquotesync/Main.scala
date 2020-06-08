@@ -15,7 +15,8 @@ import slick.jdbc.SQLiteProfile.backend.Database
 import scala.concurrent._
 
 object Main extends App with LazyLogging {
-  val startMillis: Long = System.currentTimeMillis()
+  val startNanos: Long = System.nanoTime()
+  val MaxSymbolLength = 5
   // Sample CSV output:
   // Date,Open,High,Low,Close,Adj Close,Volume
   // 2020-03-19,1093.050049,1094.000000,1060.107544,1078.910034,1078.910034,333575
@@ -27,7 +28,9 @@ object Main extends App with LazyLogging {
    */
   def securities(db: Database)(implicit ec: ExecutionContext): Future[Seq[(String,String)]] = {
     for {
-      secs: Seq[(String, String)] <- db.run(sql"SELECT zuniqueid, zsymbol FROM zsecurity".as[(String, String)])
+      secs: Seq[(String, String)] <- db.
+        run(sql"SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ${MaxSymbolLength}".
+        as[(String, String)])
       _ = logger.info(s"Found ${secs.size} securities...")
     } yield secs
   }
@@ -35,7 +38,7 @@ object Main extends App with LazyLogging {
   /**
    * Enriches a security with price information from Yahoo Finance.
    */
-  def prices(
+  def getStockPrices(
       http: HttpExt, securityId: String, symbol: String)(
       implicit ec: ExecutionContext, mat: Materializer):
       Future[Option[(String, String, LocalDate, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Int)]] = {
@@ -148,8 +151,7 @@ object Main extends App with LazyLogging {
         normalize
       System.setProperty("ibankFilePath", ibankFile.toString)
 
-      implicit val system: ActorSystem =
-      ActorSystem("stock-quote-sync")
+      implicit val system: ActorSystem = ActorSystem("stock-quote-sync")
       implicit val ec: ExecutionContext = system.dispatcher
       implicit val mat: Materializer = Materializer(system)
       val http: HttpExt = Http(system)
@@ -161,12 +163,12 @@ object Main extends App with LazyLogging {
           secs: Seq[(String,String)] <- securities(db)
           prices: Seq[(String, String, LocalDate, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Int)] <-
             Future.sequence(
-              secs.map { case (securityId: String, symbol: String) => prices(http, securityId, symbol)}
+              secs.map { case (securityId: String, symbol: String) => getStockPrices(http, securityId, symbol)}
             ).
             map(_.flatten)
           _ <- persistPrices(db, prices)
         } yield {
-          val elapsedSecs: Double = (System.currentTimeMillis() - startMillis) / 1000.0
+          val elapsedSecs: Double = (System.nanoTime() - startNanos) / 1000000000.0
           logger.info(f"Security prices synchronized in ${elapsedSecs}%.3fs.")
         }
       ).
@@ -180,6 +182,8 @@ object Main extends App with LazyLogging {
         system.terminate()
       }
 
-    case _ => System.err.println("Please specify path to ibank data file.")
+    case _ =>
+      System.err.println("Please specify path to ibank data file.")
+      System.exit(1)
   }
 }
