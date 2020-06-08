@@ -15,6 +15,7 @@ import (
 	"time"
 )
 
+const maxSymbolLength = 5
 const ent = 42
 const opt = 1
 const dateLayout = "2006-01-02"
@@ -56,7 +57,8 @@ func checkDatabaseTxError(err error, tx *sql.Tx, database *sql.DB) {
 
 func readSecurities(tx *sql.Tx, database *sql.DB) []StockPrice {
 	stockPrices := make([]StockPrice, 0, 10)
-	rows, err := database.Query("SELECT zuniqueid, zsymbol FROM zsecurity")
+	rows, err := database.Query(
+	"SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= " + maxSymbolLength)
 	checkDatabaseError(err, database)
 
 	for rows.Next() {
