@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+export JAVA_HOME=${GRAALVM_HOME}
 
 echo "> building jar"
 
