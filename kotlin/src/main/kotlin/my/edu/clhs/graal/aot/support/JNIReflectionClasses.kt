@@ -1,4 +1,4 @@
-package my.edu.clhs.graal.aot.sqlite
+package my.edu.clhs.graal.aot.support
 
 import com.oracle.svm.core.annotate.AutomaticFeature
 import com.oracle.svm.core.jni.JNIRuntimeAccess
@@ -13,20 +13,6 @@ import java.util.*
 
 @AutomaticFeature
 class JNIReflectionClasses : Feature {
-    /**
-     * All classes defined here will have reflection support
-     */
-    private fun getClasses(): Array<Class<*>> {
-        return arrayOf(
-                NativeDB::class.java,
-                Function::class.java,
-                Aggregate::class.java,
-                ProgressHandler::class.java,
-                Function.Window::class.java,
-                ProgressObserver::class.java
-        )
-    }
-
     /**
      * Register all constructors and methods on graalvm to reflection support at runtime
      */
@@ -56,8 +42,16 @@ class JNIReflectionClasses : Feature {
 
     private fun setupClasses() {
         try {
-            println("> Loading classes for future reflection support")
-            for (clazz in getClasses()) {
+            println("> Loading JNI classes for future reflection support")
+            val classes = arrayOf(
+                NativeDB::class.java,
+                Function::class.java,
+                Aggregate::class.java,
+                ProgressHandler::class.java,
+                Function.Window::class.java,
+                ProgressObserver::class.java
+            )
+            for (clazz in classes) {
                 process(clazz)
             }
         } catch (e: Error) {
