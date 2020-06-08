@@ -9,11 +9,8 @@ echo "> building jar"
 mkdir -p build/graal
 
 echo "> compiling binary"
-#  --no-server \
-#  --report-unsupported-elements-at-runtime \
 ${GRAALVM_HOME}/bin/native-image \
-  --enable-all-security-services \
-  --enable-http \
+  --no-server \
   --enable-https \
   -H:Path=./build/graal \
   -H:Name=ibdq \
