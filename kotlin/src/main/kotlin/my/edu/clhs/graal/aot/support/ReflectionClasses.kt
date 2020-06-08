@@ -35,7 +35,11 @@ class ReflectionClasses : Feature {
     private fun setupClasses() {
         println("> Loading regular classes for future reflection support")
         val classes = arrayOf(
-            Class.forName("kotlin.internal.jdk8.JDK8PlatformImplementations")
+            Class.forName("java.util.concurrent.atomic.AtomicLongFieldUpdater\$CASUpdater"),
+            Class.forName("kotlin.internal.jdk8.JDK8PlatformImplementations"),
+            Class.forName("io.ktor.utils.io.ByteBufferChannel"),
+            Class.forName("io.ktor.utils.io.core.BufferFactoryKt"),
+            Class.forName("io.ktor.utils.io.internal.ReadWriteBufferState\$IdleEmpty")
         )
         for (clazz in classes) {
             process(clazz)
