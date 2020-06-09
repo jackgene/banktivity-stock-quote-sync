@@ -115,6 +115,7 @@ fun readSecurities(conn: Connection): List<Security> {
 }
 
 suspend fun getStockPrice(http: HttpClient, symbol: String): Price? {
+    logger.debug { "Downloading prices for ${symbol}..." }
     val resp: HttpResponse = http.get(
         "https://query1.finance.yahoo.com/v7/finance/download/${symbol}?interval=1d&events=history")
     return if (resp.status.value != 200) null
