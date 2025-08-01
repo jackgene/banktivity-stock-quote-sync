@@ -1,26 +1,38 @@
-import CSV
 import Foundation
 import Logging
 import SQLite
 
-extension FileHandle : TextOutputStream {
+extension FileHandle : @retroactive TextOutputStream {
     public func write(_ string: String) {
         guard let data = string.data(using: .utf8) else { return }
         self.write(data)
     }
 }
 
-struct StockPrice {
-    var securityId: String
-    var symbol: String
-    var date: Date
-    var volume: Int
-    var close: Decimal
-    var high: Decimal
-    var low: Decimal
-    var open: Decimal
+struct SecurityId {
+    let uniqueId: String
+    let symbol: String
 }
 
+struct StockPrice: Decodable {
+    let millisSinceEpoch: Int64
+    let open: Decimal
+    let low: Decimal
+    let high: Decimal
+    let close: Decimal
+    let volume: Int
+    var date: Date {
+        Date(timeIntervalSince1970: TimeInterval(millisSinceEpoch / 1000))
+    }
+}
+
+struct StockPrices: Decodable {
+    let bySymbol: [String: StockPrice]
+}
+
+enum Error: Swift.Error {
+    case error(String)
+}
 let startSecs = Date().timeIntervalSinceReferenceDate
 
 // General constants
@@ -60,79 +72,50 @@ let logger = { () -> Logger in
     return logger
 }()
 var stdErr = FileHandle.standardError
-var stockPrices: [StockPrice] = [StockPrice]() // There's got to be a better way to do this.
 
-func readSecurities(db: Connection) throws -> [(String, String)] {
-    let securities: [(String,String)] = try db
+func readSecurityIds(db: Connection) throws -> [String: String] {
+    let securityIds: [String: String] = Dictionary(uniqueKeysWithValues: try db
         .prepare("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= \(maxSymbolLength)")
         .compactMap {(row) in
-            if let securityId = row[0] as? String, let symbol = row[1] as? String {
-                return (securityId, symbol)
+            if let uniqueId = row[0] as? String, let symbol = row[1] as? String {
+                return (symbol, uniqueId)
             } else {
                 return nil
             }
-        }
-    logger.info("Found \(securities.count) securities...")
+        })
+    logger.info("Found \(securityIds.count) securities...")
 
-    return securities
+    return securityIds
 }
 
-func getStockPrices(securities: [(String, String)]) throws ->  DispatchSemaphore {
-    let doneSem: DispatchSemaphore = DispatchSemaphore(value: 0)
-    let httpSem: DispatchSemaphore = DispatchSemaphore(value: 0)
-    let urlSessionCfg = URLSessionConfiguration.ephemeral
-    urlSessionCfg.httpMaximumConnectionsPerHost = httpConcurrency
-    urlSessionCfg.httpShouldUsePipelining = true
-    let urlSession = URLSession(configuration: urlSessionCfg)
-    let dateFormatter = DateFormatter()
-    dateFormatter.locale = Locale(identifier: "en_US_POSIX") // set locale to reliable US_POSIX
-    dateFormatter.dateFormat = "yyyy-MM-dd"
-    dateFormatter.timeZone = TimeZone(secondsFromGMT: -12 * 60 * 60)
-    for (uuid, symbol) in securities {
-        logger.debug("Downloading prices for \(symbol)...")
-        let url: URL = URL(string: "https://query1.finance.yahoo.com/v7/finance/download/\(symbol)?interval=1d&events=history")!
-        let task: URLSessionDataTask = urlSession.dataTask(with: url) {(data, response, error) in
-            defer { httpSem.signal() }
-            if let data = data, let httpResponse = response as? HTTPURLResponse {
-                if (httpResponse.statusCode == 200) {
-                    let stockPriceCsv = try! CSVReader(string: String(data: data, encoding: .utf8)!, hasHeaderRow: true)
-                    if stockPriceCsv.next() != nil {
-                        stockPrices.append(
-                            StockPrice(
-                                securityId: uuid,
-                                symbol: symbol,
-                                date: dateFormatter.date(from: stockPriceCsv["Date"]!)!,
-                                volume: Int(stockPriceCsv["Volume"]!)!,
-                                close: Decimal(string: stockPriceCsv["Close"]!)!,
-                                high: Decimal(string: stockPriceCsv["High"]!)!,
-                                low: Decimal(string: stockPriceCsv["Low"]!)!,
-                                open: Decimal(string: stockPriceCsv["Open"]!)!
-                            )
-                        )
-                    }
-                } else if (httpResponse.statusCode != 404) {
-                    logger.error("Received bad HTTP response \(httpResponse.statusCode)")
-                }
+func getStockPrices(symbols: [String], completionHandler: @escaping @Sendable (Swift.Result<StockPrices, any Swift.Error>) -> Void) {
+    let urlSession = URLSession(configuration: URLSessionConfiguration.ephemeral)
+    logger.debug("Downloading prices for \(symbols)...")
+    let url: URL = URL(string: "https://sparc-service.herokuapp.com/js/stock-prices.js?symbols=\(symbols.joined(separator: ","))")!
+    let task: URLSessionDataTask = urlSession.dataTask(with: url) { (data, response, error) in
+        if let data = data, let httpResponse = response as? HTTPURLResponse {
+            if (httpResponse.statusCode == 200) {
+                let jsonDecoder: JSONDecoder = JSONDecoder()
+                completionHandler(Swift.Result { try jsonDecoder.decode(StockPrices.self, from: data) })
+            } else {
+                logger.error("Received bad HTTP response \(httpResponse.statusCode)")
+                completionHandler(.failure(Error.error("Received bad HTTP response \(httpResponse.statusCode)")))
             }
+        } else if let error = error {
+            completionHandler(.failure(error))
+        } else {
+            fatalError("URLDataTask is neither successful nor did it fail with an error")
         }
-        task.resume()
     }
-    DispatchQueue.global().async {
-        for _ in securities {
-            httpSem.wait()
-        }
-        doneSem.signal()
-    }
-
-    return doneSem
+    task.resume()
 }
 
-func persistStockPrices(db: Connection) throws -> Void {
+func persistStockPrices(stockPrices: [(SecurityId, StockPrice)], db: Connection) throws -> Void {
     let updateStmt = try db.prepare(updateSql)
     let insertStmt = try db.prepare(insertSql)
     let prePersistTotalChanges: Int = db.totalChanges
     
-    for stockPrice: StockPrice in stockPrices {
+    for (securityId, stockPrice): (SecurityId, StockPrice) in stockPrices {
         let changes: Int = db.totalChanges
         try updateStmt.run(
             stockPrice.volume,
@@ -143,23 +126,23 @@ func persistStockPrices(db: Connection) throws -> Void {
             ent,
             opt,
             stockPrice.date.timeIntervalSinceReferenceDate,
-            stockPrice.securityId
+            securityId.uniqueId
         )
         if db.totalChanges > changes {
-            logger.debug("Existing entry for \(stockPrice.symbol) updated...")
+            logger.debug("Existing entry for \(securityId.symbol) updated...")
         } else {
             try insertStmt.run(
                 ent,
                 opt,
                 stockPrice.date.timeIntervalSinceReferenceDate,
-                stockPrice.securityId,
+                securityId.uniqueId,
                 stockPrice.volume,
                 "\(stockPrice.close)",
                 "\(stockPrice.high)",
                 "\(stockPrice.low)",
                 "\(stockPrice.open)"
             )
-            logger.debug("New entry for \(stockPrice.symbol) created...")
+            logger.debug("New entry for \(securityId.symbol) created...")
         }
     }
     let count: Int = db.totalChanges - prePersistTotalChanges
@@ -179,10 +162,34 @@ if CommandLine.arguments.count == 2 {
     logger.info("Processing SQLite file \(sqliteFile)...")
     let db = try Connection(sqliteFile)
     try db.transaction {
-        let securities: [(String, String)] = try readSecurities(db: db)
-        let pricesSem: DispatchSemaphore = try getStockPrices(securities: securities)
-        pricesSem.wait()
-        try persistStockPrices(db: db)
+        let securityIdsBySymbol: [String: String] = try readSecurityIds(db: db)
+        var stockPricesBySymbol: [String: StockPrice]? = nil
+        var error: (any Swift.Error)? = nil
+        let done: DispatchSemaphore = DispatchSemaphore(value: 0)
+        getStockPrices(symbols: Array(securityIdsBySymbol.keys)) { (stockPrices: Swift.Result<StockPrices, any Swift.Error>) in
+            defer { done.signal() }
+            switch stockPrices {
+            case let .success(stockPrices):
+                stockPricesBySymbol = stockPrices.bySymbol
+            case let .failure(e):
+                error = e
+            }
+        }
+        done.wait()
+        if let error {
+            throw error
+        }
+        guard let stockPricesBySymbol else {
+            throw Error.error("wtf?")
+        }
+        try persistStockPrices(
+            stockPrices: stockPricesBySymbol.compactMap { (symbol, stockPrice) in
+                securityIdsBySymbol[symbol].map { uniqueId in
+                    (SecurityId(uniqueId: uniqueId, symbol: symbol), stockPrice)
+                }
+            },
+            db: db
+        )
     }
     let elapsedSecs = Date().timeIntervalSinceReferenceDate - startSecs
     logger.info("Security prices synchronized in \(String(format: "%.3f", elapsedSecs))s.")
