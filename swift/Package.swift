@@ -17,8 +17,5 @@ let package = Package(
         .target(
             name: "banktivity-stock-quote-sync-swift",
             dependencies: ["Logging", "SQLite"]),
-        .testTarget(
-            name: "banktivity-stock-quote-sync-swiftTests",
-            dependencies: ["banktivity-stock-quote-sync-swift"]),
     ]
 )
