@@ -2,37 +2,6 @@ import Foundation
 import Logging
 import SQLite
 
-extension FileHandle : @retroactive TextOutputStream {
-    public func write(_ string: String) {
-        guard let data = string.data(using: .utf8) else { return }
-        self.write(data)
-    }
-}
-
-struct SecurityId {
-    let uniqueId: String
-    let symbol: String
-}
-
-struct StockPrice: Decodable {
-    let millisSinceEpoch: Int64
-    let open: Decimal
-    let low: Decimal
-    let high: Decimal
-    let close: Decimal
-    let volume: Int
-    var date: Date {
-        Date(timeIntervalSince1970: TimeInterval(millisSinceEpoch / 1000))
-    }
-}
-
-struct StockPrices: Decodable {
-    let bySymbol: [String: StockPrice]
-}
-
-enum Error: Swift.Error {
-    case error(String)
-}
 let startSecs = Date().timeIntervalSinceReferenceDate
 
 // General constants
