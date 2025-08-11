@@ -31,9 +31,6 @@ INSERT INTO zprice (
 )
 """
 
-// HTTP constants
-let httpConcurrency = 4
-
 let logger = { () -> Logger in
     var logger = Logger(label: "banktivity-stock-quote-sync")
     logger.logLevel = Logger.Level.debug
