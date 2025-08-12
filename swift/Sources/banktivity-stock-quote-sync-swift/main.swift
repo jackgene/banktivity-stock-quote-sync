@@ -1,3 +1,4 @@
+import Atomics
 import Foundation
 import Logging
 import SQLite
@@ -30,9 +31,6 @@ INSERT INTO zprice (
     ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 """
-
-// HTTP constants
-let httpConcurrency = 4
 
 let logger = { () -> Logger in
     var logger = Logger(label: "banktivity-stock-quote-sync")
@@ -130,35 +128,37 @@ if CommandLine.arguments.count == 2 {
     let sqliteFile: String = "\(iBankDataDir)/accountsData.ibank"
     logger.info("Processing SQLite file \(sqliteFile)...")
     let db = try Connection(sqliteFile)
-    try db.transaction {
-        let securityIdsBySymbol: [String: String] = try readSecurityIds(db: db)
-        var stockPricesBySymbol: [String: StockPrice]? = nil
-        var error: (any Swift.Error)? = nil
-        let done: DispatchSemaphore = DispatchSemaphore(value: 0)
-        getStockPrices(symbols: Array(securityIdsBySymbol.keys)) { (stockPrices: Swift.Result<StockPrices, any Swift.Error>) in
-            defer { done.signal() }
-            switch stockPrices {
-            case let .success(stockPrices):
-                stockPricesBySymbol = stockPrices.bySymbol
-            case let .failure(e):
-                error = e
-            }
-        }
-        done.wait()
-        if let error {
-            throw error
-        }
-        guard let stockPricesBySymbol else {
-            throw Error.error("wtf?")
-        }
-        try persistStockPrices(
-            stockPrices: stockPricesBySymbol.compactMap { (symbol, stockPrice) in
-                securityIdsBySymbol[symbol].map { uniqueId in
-                    (SecurityId(uniqueId: uniqueId, symbol: symbol), stockPrice)
+    let securityIdsBySymbol: [String: String] = try readSecurityIds(db: db)
+    let errorOccured: ManagedAtomic<Bool> = ManagedAtomic(false)
+    let done: DispatchSemaphore = DispatchSemaphore(value: 0)
+    getStockPrices(symbols: Array(securityIdsBySymbol.keys)) { (stockPrices: Swift.Result<StockPrices, any Swift.Error>) in
+        defer { done.signal() }
+        switch stockPrices {
+        case let .success(stockPrices):
+            do {
+                try db.transaction {
+                    try persistStockPrices(
+                        stockPrices: stockPrices.bySymbol.compactMap { (symbol, stockPrice) in
+                            securityIdsBySymbol[symbol].map { uniqueId in
+                                (SecurityId(uniqueId: uniqueId, symbol: symbol), stockPrice)
+                            }
+                        },
+                        db: db
+                    )
                 }
-            },
-            db: db
-        )
+            } catch {
+                logger.error("Failed to persist stock prices: \(error)")
+                errorOccured.store(true, ordering: .relaxed)
+            }
+        case let .failure(e):
+            logger.error("Failed to get stock prices: \(e)")
+            errorOccured.store(true, ordering: .relaxed)
+        }
+    }
+    done.wait()
+    if errorOccured.load(ordering: .relaxed) {
+        logger.error("Program terminated abnormally.")
+        exit(1)
     }
     let elapsedSecs = Date().timeIntervalSinceReferenceDate - startSecs
     logger.info("Security prices synchronized in \(String(format: "%.3f", elapsedSecs))s.")
