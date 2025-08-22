@@ -42,8 +42,8 @@ var stdErr = FileHandle.standardError
 
 func readSecurityIds(db: Connection) throws -> [String: String] {
     let securityIds: [String: String] = Dictionary(uniqueKeysWithValues: try db
-        .prepare("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= \(maxSymbolLength)")
-        .compactMap {(row) in
+        .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ?", maxSymbolLength)
+        .compactMap {(row: Statement.Element) in
             if let uniqueId = row[0] as? String, let symbol = row[1] as? String {
                 return (symbol, uniqueId)
             } else {
