@@ -54,26 +54,27 @@ struct Main: ParsableCommand {
         }
     }
     
-    static func readSecurityIds(db: Connection) -> Single<[SecurityId]> {
+    static func readSecurityIDs(db: Connection) -> Single<[SecurityID]> {
         db.rx
             .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ?", Self.maxSymbolLength)
             .compactMap { (row: Statement.Element) in
-                if let uniqueId = row[0] as? String, let symbol = row[1] as? String {
-                    return SecurityId(uniqueId: uniqueId, symbol: symbol)
+                if let uniqueID = row[0] as? String, let symbol = row[1] as? String {
+                    return SecurityID(uniqueID: uniqueID, symbol: symbol)
                 } else {
                     return nil
                 }
             }
-            .reduce([]) { (accum: [SecurityId], next: SecurityId) in accum + [ next ] }
-            .map { (securityIds: [SecurityId]) in
-                Self.logger.info("Found \(securityIds.count) securities...")
-                return securityIds
+            .reduce([]) { (accum: [SecurityID], next: SecurityID) in accum + [ next ] }
+            .map { (securityIDs: [SecurityID]) in
+                let securityIDsSorted: [SecurityID] = securityIDs.sorted { $0.symbol < $1.symbol }
+                Self.logger.info("Found \(securityIDsSorted.count) securities (\(securityIDsSorted.map {$0.symbol}.joined(separator: ", ")))")
+                return securityIDsSorted
             }
             .asSingle()
     }
     
     static func getStockPrices(symbols: some Sequence<String>) -> Single<StockPrices> {
-        Self.logger.debug("Downloading prices for \(symbols)...")
+        Self.logger.info("Downloading prices")
         let url: URL = URL(string: "https://sparc-service.herokuapp.com/js/stock-prices.js?symbols=\(symbols.joined(separator: ","))")!
         return Self.urlSession.rx.data(request: URLRequest(url: url))
             .map { (data: Data) in
@@ -98,23 +99,23 @@ struct Main: ParsableCommand {
                 Self.ent,
                 Self.opt,
                 security.price.date.timeIntervalSinceReferenceDate,
-                security.id.uniqueId
+                security.id.uniqueID
             )
             if db.totalChanges > changes {
-                Self.logger.debug("Existing entry for \(security.id.symbol) updated...")
+                Self.logger.debug("Existing entry for \(security.id.symbol) updated")
             } else {
                 try insertStmt.run(
                     Self.ent,
                     Self.opt,
                     security.price.date.timeIntervalSinceReferenceDate,
-                    security.id.uniqueId,
+                    security.id.uniqueID,
                     security.price.volume,
                     "\(security.price.close)",
                     "\(security.price.high)",
                     "\(security.price.low)",
                     "\(security.price.open)"
                 )
-                Self.logger.debug("New entry for \(security.id.symbol) created...")
+                Self.logger.debug("New entry for \(security.id.symbol) created")
             }
         }
         let count: Int = db.totalChanges - prePersistTotalChanges
@@ -124,26 +125,26 @@ struct Main: ParsableCommand {
         WHERE z_name = 'Price'
         """
         )
-        Self.logger.debug("Primary key for price updated...")
-        Self.logger.info("Persisted prices for \(count) securities...")
+        Self.logger.debug("Primary key for price updated")
+        Self.logger.info("Persisted prices for \(count) securities")
     }
     
     func run() {
         let startSecs: TimeInterval = Date().timeIntervalSinceReferenceDate
         
         let sqliteFilePath: String = "\(banktivityDataDir)/accountsData.ibank"
-        Self.logger.info("Processing SQLite file \(sqliteFilePath)...")
+        Self.logger.info("Processing SQLite file \(sqliteFilePath)")
         
         let disposeBag: DisposeBag = .init()
         Self.connectToDatabase(sqliteFilePath: sqliteFilePath)
             .flatMap { (db: Connection) in
-                Self.readSecurityIds(db: db).flatMap { (securityIds: [SecurityId]) in
-                    Self.getStockPrices(symbols: securityIds.map { $0.symbol }).map { (stockPrices: StockPrices) in
+                Self.readSecurityIDs(db: db).flatMap { (securityIDs: [SecurityID]) in
+                    Self.getStockPrices(symbols: securityIDs.map { $0.symbol }).map { (stockPrices: StockPrices) in
                         try db.transaction {
                             try Self.persistStockPrices(
-                                securities: securityIds.compactMap { (securityId: SecurityId) in
-                                    stockPrices.bySymbol[securityId.symbol].map { (stockPrice: StockPrice) in
-                                        Security(id: securityId, price: stockPrice)
+                                securities: securityIDs.compactMap { (securityID: SecurityID) in
+                                    stockPrices.bySymbol[securityID.symbol].map { (stockPrice: StockPrice) in
+                                        Security(id: securityID, price: stockPrice)
                                     }
                                 },
                                 db: db
@@ -155,7 +156,7 @@ struct Main: ParsableCommand {
             .subscribe(
                 onSuccess: { _ in
                     let elapsedSecs = Date().timeIntervalSinceReferenceDate - startSecs
-                    Self.logger.info("Security prices synchronized in \(String(format: "%.3f", elapsedSecs))s.")
+                    Self.logger.info("Securities updated in \(String(format: "%.3f", elapsedSecs))s")
                     Self.exit()
                 },
                 onFailure: { error in

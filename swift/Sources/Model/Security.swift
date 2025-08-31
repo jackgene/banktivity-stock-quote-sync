@@ -1,4 +1,4 @@
 struct Security {
-    let id: SecurityId
+    let id: SecurityID
     let price: StockPrice
 }
