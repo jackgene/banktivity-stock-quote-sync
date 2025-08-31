@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import Logging
 import SQLite
+import enum Swift.Result
 
 @main
 struct Main: ParsableCommand {
@@ -44,22 +45,22 @@ struct Main: ParsableCommand {
     @Argument(help: "Path to Banktivity data directory")
     var banktivityDataDir: String
     
-    static func readSecurityIds(db: Connection) throws -> [String: String] {
-        let securityIds: [String: String] = Dictionary(uniqueKeysWithValues: try db
+    static func readSecurityIds(db: Connection) throws -> [SecurityId] {
+        let securityIds: [SecurityId] = try db
             .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ?", Self.maxSymbolLength)
             .compactMap {(row: Statement.Element) in
                 if let uniqueId = row[0] as? String, let symbol = row[1] as? String {
-                    return (symbol, uniqueId)
+                    return SecurityId(uniqueId: uniqueId, symbol: symbol)
                 } else {
                     return nil
                 }
-            })
+            }
         Self.logger.info("Found \(securityIds.count) securities...")
         
         return securityIds
     }
     
-    static func getStockPrices(symbols: [String], completionHandler: @escaping @Sendable (Swift.Result<StockPrices, any Swift.Error>) -> Void) {
+    static func getStockPrices(symbols: [String], completionHandler: @escaping @Sendable (Result<StockPrices, any Swift.Error>) -> Void) {
         let urlSession = URLSession(configuration: URLSessionConfiguration.ephemeral)
         Self.logger.debug("Downloading prices for \(symbols)...")
         let url: URL = URL(string: "https://sparc-service.herokuapp.com/js/stock-prices.js?symbols=\(symbols.joined(separator: ","))")!
@@ -67,7 +68,7 @@ struct Main: ParsableCommand {
             if let data = data, let httpResponse = response as? HTTPURLResponse {
                 if (httpResponse.statusCode == 200) {
                     let jsonDecoder: JSONDecoder = JSONDecoder()
-                    completionHandler(Swift.Result { try jsonDecoder.decode(StockPrices.self, from: data) })
+                    completionHandler(Result { try jsonDecoder.decode(StockPrices.self, from: data) })
                 } else {
                     Self.logger.error("Received bad HTTP response \(httpResponse.statusCode)")
                     completionHandler(.failure(Error.error("Received bad HTTP response \(httpResponse.statusCode)")))
@@ -81,39 +82,39 @@ struct Main: ParsableCommand {
         task.resume()
     }
     
-    static func persistStockPrices(stockPrices: [(SecurityId, StockPrice)], db: Connection) throws -> Void {
+    static func persistStockPrices(securities: [Security], db: Connection) throws -> Void {
         let updateStmt = try db.prepare(Self.updateSql)
         let insertStmt = try db.prepare(Self.insertSql)
         let prePersistTotalChanges: Int = db.totalChanges
         
-        for (securityId, stockPrice): (SecurityId, StockPrice) in stockPrices {
+        for security: Security in securities {
             let changes: Int = db.totalChanges
             try updateStmt.run(
-                stockPrice.volume,
-                "\(stockPrice.close)",
-                "\(stockPrice.high)",
-                "\(stockPrice.low)",
-                "\(stockPrice.open)",
+                security.price.volume,
+                "\(security.price.close)",
+                "\(security.price.high)",
+                "\(security.price.low)",
+                "\(security.price.open)",
                 Self.ent,
                 Self.opt,
-                stockPrice.date.timeIntervalSinceReferenceDate,
-                securityId.uniqueId
+                security.price.date.timeIntervalSinceReferenceDate,
+                security.id.uniqueId
             )
             if db.totalChanges > changes {
-                Self.logger.debug("Existing entry for \(securityId.symbol) updated...")
+                Self.logger.debug("Existing entry for \(security.id.symbol) updated...")
             } else {
                 try insertStmt.run(
                     Self.ent,
                     Self.opt,
-                    stockPrice.date.timeIntervalSinceReferenceDate,
-                    securityId.uniqueId,
-                    stockPrice.volume,
-                    "\(stockPrice.close)",
-                    "\(stockPrice.high)",
-                    "\(stockPrice.low)",
-                    "\(stockPrice.open)"
+                    security.price.date.timeIntervalSinceReferenceDate,
+                    security.id.uniqueId,
+                    security.price.volume,
+                    "\(security.price.close)",
+                    "\(security.price.high)",
+                    "\(security.price.low)",
+                    "\(security.price.open)"
                 )
-                Self.logger.debug("New entry for \(securityId.symbol) created...")
+                Self.logger.debug("New entry for \(security.id.symbol) created...")
             }
         }
         let count: Int = db.totalChanges - prePersistTotalChanges
@@ -132,18 +133,18 @@ struct Main: ParsableCommand {
         let sqliteFile: String = "\(banktivityDataDir)/accountsData.ibank"
         Self.logger.info("Processing SQLite file \(sqliteFile)...")
         let db = try Connection(sqliteFile)
-        let securityIdsBySymbol: [String: String] = try Self.readSecurityIds(db: db)
+        let securityIds: [SecurityId] = try Self.readSecurityIds(db: db)
         let done: DispatchSemaphore = DispatchSemaphore(value: 0)
-        Self.getStockPrices(symbols: Array(securityIdsBySymbol.keys)) { (stockPrices: Swift.Result<StockPrices, any Swift.Error>) in
+        Self.getStockPrices(symbols: securityIds.map { $0.symbol }) { (stockPrices: Result<StockPrices, any Swift.Error>) in
             defer { done.signal() }
             switch stockPrices {
             case let .success(stockPrices):
                 do {
                     try db.transaction {
                         try Self.persistStockPrices(
-                            stockPrices: stockPrices.bySymbol.compactMap { (symbol, stockPrice) in
-                                securityIdsBySymbol[symbol].map { uniqueId in
-                                    (SecurityId(uniqueId: uniqueId, symbol: symbol), stockPrice)
+                            securities: securityIds.compactMap { (securityId: SecurityId) in
+                                stockPrices.bySymbol[securityId.symbol].map { (stockPrice: StockPrice) in
+                                    Security(id: securityId, price: stockPrice)
                                 }
                             },
                             db: db

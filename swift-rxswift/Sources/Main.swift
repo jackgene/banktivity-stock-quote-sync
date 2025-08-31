@@ -54,20 +54,20 @@ struct Main: ParsableCommand {
         }
     }
     
-    static func readSecurityIds(db: Connection) -> Single<[String: String]> {
+    static func readSecurityIds(db: Connection) -> Single<[SecurityId]> {
         db.rx
             .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ?", Self.maxSymbolLength)
             .compactMap { (row: Statement.Element) in
                 if let uniqueId = row[0] as? String, let symbol = row[1] as? String {
-                    return (symbol, uniqueId)
+                    return SecurityId(uniqueId: uniqueId, symbol: symbol)
                 } else {
                     return nil
                 }
             }
-            .reduce([]) { (accum: [(String, String)], next: (String, String)) in accum + [ next ] }
-            .map { (symbolsAndSecurityIds: [(String, String)]) in
-                Self.logger.info("Found \(symbolsAndSecurityIds.count) securities...")
-                return Dictionary(uniqueKeysWithValues: symbolsAndSecurityIds)
+            .reduce([]) { (accum: [SecurityId], next: SecurityId) in accum + [ next ] }
+            .map { (securityIds: [SecurityId]) in
+                Self.logger.info("Found \(securityIds.count) securities...")
+                return securityIds
             }
             .asSingle()
     }
@@ -82,39 +82,39 @@ struct Main: ParsableCommand {
             .asSingle()
     }
     
-    static func persistStockPrices(stockPrices: [(SecurityId, StockPrice)], db: Connection) throws -> Void {
+    static func persistStockPrices(securities: [Security], db: Connection) throws -> Void {
         let updateStmt = try db.prepare(Self.updateSql)
         let insertStmt = try db.prepare(Self.insertSql)
         let prePersistTotalChanges: Int = db.totalChanges
         
-        for (securityId, stockPrice): (SecurityId, StockPrice) in stockPrices {
+        for security: Security in securities {
             let changes: Int = db.totalChanges
             try updateStmt.run(
-                stockPrice.volume,
-                "\(stockPrice.close)",
-                "\(stockPrice.high)",
-                "\(stockPrice.low)",
-                "\(stockPrice.open)",
+                security.price.volume,
+                "\(security.price.close)",
+                "\(security.price.high)",
+                "\(security.price.low)",
+                "\(security.price.open)",
                 Self.ent,
                 Self.opt,
-                stockPrice.date.timeIntervalSinceReferenceDate,
-                securityId.uniqueId
+                security.price.date.timeIntervalSinceReferenceDate,
+                security.id.uniqueId
             )
             if db.totalChanges > changes {
-                Self.logger.debug("Existing entry for \(securityId.symbol) updated...")
+                Self.logger.debug("Existing entry for \(security.id.symbol) updated...")
             } else {
                 try insertStmt.run(
                     Self.ent,
                     Self.opt,
-                    stockPrice.date.timeIntervalSinceReferenceDate,
-                    securityId.uniqueId,
-                    stockPrice.volume,
-                    "\(stockPrice.close)",
-                    "\(stockPrice.high)",
-                    "\(stockPrice.low)",
-                    "\(stockPrice.open)"
+                    security.price.date.timeIntervalSinceReferenceDate,
+                    security.id.uniqueId,
+                    security.price.volume,
+                    "\(security.price.close)",
+                    "\(security.price.high)",
+                    "\(security.price.low)",
+                    "\(security.price.open)"
                 )
-                Self.logger.debug("New entry for \(securityId.symbol) created...")
+                Self.logger.debug("New entry for \(security.id.symbol) created...")
             }
         }
         let count: Int = db.totalChanges - prePersistTotalChanges
@@ -137,13 +137,13 @@ struct Main: ParsableCommand {
         let disposeBag: DisposeBag = .init()
         Self.connectToDatabase(sqliteFilePath: sqliteFilePath)
             .flatMap { (db: Connection) in
-                Self.readSecurityIds(db: db).flatMap { (securityIdsBySymbol: [String: String]) in
-                    Self.getStockPrices(symbols: securityIdsBySymbol.keys).map { (stockPrices: StockPrices) in
+                Self.readSecurityIds(db: db).flatMap { (securityIds: [SecurityId]) in
+                    Self.getStockPrices(symbols: securityIds.map { $0.symbol }).map { (stockPrices: StockPrices) in
                         try db.transaction {
                             try Self.persistStockPrices(
-                                stockPrices: stockPrices.bySymbol.compactMap { (symbol, stockPrice) in
-                                    securityIdsBySymbol[symbol].map { uniqueId in
-                                        (SecurityId(uniqueId: uniqueId, symbol: symbol), stockPrice)
+                                securities: securityIds.compactMap { (securityId: SecurityId) in
+                                    stockPrices.bySymbol[securityId.symbol].map { (stockPrice: StockPrice) in
+                                        Security(id: securityId, price: stockPrice)
                                     }
                                 },
                                 db: db
