@@ -2,134 +2,108 @@ package main
 
 import (
 	"database/sql"
-	"encoding/csv"
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/shopspring/decimal"
+	"database/sql/driver"
+	"encoding/json/v2"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const maxSymbolLength = 5
 const ent = 42
 const opt = 1
-const dateLayout = "2006-01-02"
-const httpConcurrency = 4
 
 var stdOut = log.New(os.Stdout, "", log.Flags())
 var stdErr = log.New(os.Stderr, "", log.Flags())
 var appleEpoch = time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
-var httpTransport = &http.Transport{
-	MaxConnsPerHost:     httpConcurrency,
-	MaxIdleConnsPerHost: httpConcurrency}
-var httpClient = &http.Client{Transport: httpTransport}
+var httpClient = &http.Client{}
 
-type StockPrice struct {
-	securityId string
-	symbol     string
-	date       time.Time
-	open       decimal.Decimal
-	high       decimal.Decimal
-	low        decimal.Decimal
-	close      decimal.Decimal
-	volume     int
-}
-
-func checkDatabaseError(err error, database *sql.DB) {
+func checkDatabaseError(err error, database io.Closer) {
 	if err != nil {
-		database.Close()
+		_ = database.Close()
 		stdErr.Fatal("Security price synchronization failed: ", err)
 	}
 }
 
-func checkDatabaseTxError(err error, tx *sql.Tx, database *sql.DB) {
+func checkDatabaseTxError(err error, tx driver.Tx, database io.Closer) {
 	if err != nil {
-		tx.Rollback()
-		database.Close()
+		_ = tx.Rollback()
+		_ = database.Close()
 		stdErr.Fatal("Security price synchronization failed: ", err)
 	}
 }
 
-func readSecurities(tx *sql.Tx, database *sql.DB) []StockPrice {
-	stockPrices := make([]StockPrice, 0, 10)
-	rows, err := database.Query(
-	"SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= " + maxSymbolLength)
-	checkDatabaseError(err, database)
+func readSecurityIDs(db Querier) ([]SecurityID, error) {
+	rows, queryErr := db.Query(
+		"SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ? ORDER BY zsymbol", maxSymbolLength)
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer func() { _ = rows.Close() }()
 
+	securityIDS := make([]SecurityID, 0, 32)
+	var symbols strings.Builder
+	addComma := false
 	for rows.Next() {
-		stockPrice := StockPrice{}
+		securityID := SecurityID{}
 
-		err := rows.Scan(&stockPrice.securityId, &stockPrice.symbol)
-		checkDatabaseTxError(err, tx, database)
+		if rowScanErr := rows.Scan(&securityID.UniqueId, &securityID.Symbol); rowScanErr != nil {
+			return nil, rowScanErr
+		}
 
-		stockPrices = append(stockPrices, stockPrice)
+		securityIDS = append(securityIDS, securityID)
+		if addComma {
+			symbols.WriteString(", ")
+		} else {
+			addComma = true
+		}
+		symbols.WriteString(securityID.Symbol)
 	}
-	stdOut.Printf("Found %v securities...\n", len(stockPrices))
+	stdOut.Printf("Found %v securities (%v)\n", len(securityIDS), symbols.String())
 
-	return stockPrices
+	return securityIDS, nil
 }
 
-func enrichStockPrice(stockPrice StockPrice, out chan *StockPrice, tx *sql.Tx, database *sql.DB) {
-	stdOut.Printf("Downloading prices for %v...\n", stockPrice.symbol)
-	resp, err := httpClient.Get(
-		"https://query1.finance.yahoo.com/v7/finance/download/" + stockPrice.symbol + "?interval=1d&events=history")
-	checkDatabaseTxError(err, tx, database)
+func getStockPrices(symbols []string) (StockPrices, error) {
+	var stockPrices StockPrices
+	stdOut.Printf("Downloading prices")
+	resp, httpGetErr := httpClient.Get(
+		fmt.Sprintf("https://sparc-service.herokuapp.com/js/stock-prices.js?symbols=%v", strings.Join(symbols, ",")))
+	if httpGetErr != nil {
+		return stockPrices, httpGetErr
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
-		csvReader := csv.NewReader(resp.Body)
-		data, err := csvReader.ReadAll()
-		checkDatabaseTxError(err, tx, database)
-
-		if len(data) > 1 {
-			headers := data[0]
-			if headers[0] == "Date" && headers[1] == "Open" && headers[2] == "High" &&
-				headers[3] == "Low" && headers[4] == "Close" &&
-				headers[5] == "Adj Close" && headers[6] == "Volume" {
-				cols := data[1]
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.date, err = time.Parse(dateLayout, cols[0])
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.open, err = decimal.NewFromString(cols[1])
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.high, err = decimal.NewFromString(cols[2])
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.low, err = decimal.NewFromString(cols[3])
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.close, err = decimal.NewFromString(cols[4])
-				checkDatabaseTxError(err, tx, database)
-				stockPrice.volume, err = strconv.Atoi(cols[6])
-				checkDatabaseTxError(err, tx, database)
-
-				out <- &stockPrice
-			} else {
-				out <- nil
-			}
+		if jsonDecodeErr := json.UnmarshalRead(resp.Body, &stockPrices); jsonDecodeErr != nil {
+			return stockPrices, jsonDecodeErr
 		}
+
+		return stockPrices, nil
 	} else {
-		io.Copy(ioutil.Discard, resp.Body)
 		if resp.StatusCode != http.StatusNotFound {
-			stdErr.Printf("Got HTTP %v for %v...\n", resp.StatusCode, stockPrice.symbol)
+			return stockPrices, fmt.Errorf("HTTP %v", resp.StatusCode)
 		}
-		out <- nil
+		return stockPrices, nil
 	}
-	resp.Body.Close()
 }
 
 func secondsSinceAppleEpoch(date time.Time) int {
 	return int(date.Add(12 * time.Hour).Sub(appleEpoch).Seconds())
 }
 
-func persistStockPrice(in chan *StockPrice, inputCount int, tx *sql.Tx, database *sql.DB) {
+func persistStockPrices(securities []Security, db Querier) error {
 	count := 0
-	for stockPrice := range in {
-		if stockPrice != nil {
-			updateResult, err := tx.Exec(
-				`UPDATE zprice
+	for _, security := range securities {
+		updateResult, updateErr := db.Exec(
+			`UPDATE zprice
 				SET
 					zvolume = $1,
 					zclosingprice = $2,
@@ -140,68 +114,98 @@ func persistStockPrice(in chan *StockPrice, inputCount int, tx *sql.Tx, database
 					z_ent = $6 AND z_opt = $7 AND
 					zdate = $8 AND zsecurityid = $9
 				`,
-				stockPrice.volume, stockPrice.close, stockPrice.high, stockPrice.low, stockPrice.open, ent, opt, secondsSinceAppleEpoch(stockPrice.date), stockPrice.securityId)
-			checkDatabaseTxError(err, tx, database)
-			updateCount, err := updateResult.RowsAffected()
-			if updateCount == 0 {
-				_, err := tx.Exec(
-					`INSERT INTO zprice (
+			security.Price.Volume, security.Price.Close, security.Price.High, security.Price.Low, security.Price.Open,
+			ent, opt, secondsSinceAppleEpoch(security.Price.Date), security.Id.UniqueId)
+		if updateErr != nil {
+			return updateErr
+		}
+
+		updateCount, updateCountErr := updateResult.RowsAffected()
+		if updateCountErr != nil {
+			return updateCountErr
+		}
+
+		if updateCount > 0 {
+			stdOut.Printf("Existing entry for %v updated...\n", security.Id.Symbol)
+		} else {
+			_, insertErr := db.Exec(
+				`INSERT INTO zprice (
 						z_ent, z_opt, zdate, zsecurityid,
 						zvolume, zclosingprice, zhighprice, zlowprice, zopeningprice
 					) VALUES (
 						$1, $2, $3, $4, $5, $6, $7, $8, $9
 					)`,
-					ent, opt, secondsSinceAppleEpoch(stockPrice.date), stockPrice.securityId, stockPrice.volume, stockPrice.close, stockPrice.high, stockPrice.low, stockPrice.open)
-				checkDatabaseTxError(err, tx, database)
-				stdOut.Printf("New entry for %v created...\n", stockPrice.symbol)
-			} else {
-				stdOut.Printf("Existing entry for %v updated...\n", stockPrice.symbol)
+				ent, opt, secondsSinceAppleEpoch(security.Price.Date), security.Id.UniqueId,
+				security.Price.Volume, security.Price.Close, security.Price.High, security.Price.Low, security.Price.Open)
+			if insertErr != nil {
+				return insertErr
 			}
-			count += 1
+			stdOut.Printf("New entry for %v created...\n", security.Id.Symbol)
 		}
-		inputCount -= 1
-		if inputCount == 0 {
-			close(in)
-		}
+		count += 1
 	}
-	_, err := tx.Exec(
+	_, updatePrimaryKeyErr := db.Exec(
 		`UPDATE z_primarykey
 		SET z_max = (SELECT MAX(z_pk) FROM zprice)
 		WHERE z_name = 'Price'
 		`)
-	checkDatabaseTxError(err, tx, database)
+	if updatePrimaryKeyErr != nil {
+		return updatePrimaryKeyErr
+	}
+
 	stdOut.Printf("Primary key for price updated...")
 	stdOut.Printf("Persisted prices for %v securities...\n", count)
+	return nil
 }
 
 func main() {
 	start := time.Now()
 
 	if len(os.Args) == 2 {
-		iBankDataDir := os.Args[1]
-		sqliteFile := filepath.Join(iBankDataDir, "accountsData.ibank")
+		banktivityDataDir := os.Args[1]
+		sqliteFile := filepath.Join(banktivityDataDir, "accountsData.ibank")
 		stdOut.Printf("Processing SQLite file %v...\n", sqliteFile)
 
-		database, err := sql.Open("sqlite3", sqliteFile)
-		checkDatabaseError(err, database)
+		database, dbOpenErr := sql.Open("sqlite3", sqliteFile)
+		checkDatabaseError(dbOpenErr, database)
+		defer func() {
+			if dbCloseErr := database.Close(); dbCloseErr != nil {
+				stdErr.Printf("Failed to close database: %v\n", dbCloseErr)
+			}
+		}()
 
-		tx, err := database.Begin()
-		checkDatabaseTxError(err, tx, database)
+		securityIDs, readSecurityIDsErr := readSecurityIDs(database)
+		checkDatabaseError(readSecurityIDsErr, database)
 
-		persistenceChan := make(chan *StockPrice)
-
-		stockPrices := readSecurities(tx, database)
-
-		for _, stockPrice := range stockPrices {
-			go enrichStockPrice(stockPrice, persistenceChan, tx, database)
+		symbols := make([]string, 0, len(securityIDs))
+		for _, securityID := range securityIDs {
+			symbols = append(symbols, securityID.Symbol)
 		}
+		stockPrices, getStockPricesErr := getStockPrices(symbols)
+		checkDatabaseError(getStockPricesErr, database)
 
-		persistStockPrice(persistenceChan, len(stockPrices), tx, database)
+		tx, txBeginErr := database.Begin()
+		checkDatabaseTxError(txBeginErr, tx, database)
+		defer func() {
+			if txCommitErr := tx.Commit(); txCommitErr != nil {
+				stdErr.Printf("Failed to commit transaction: %v\n", txCommitErr)
+			}
+		}()
 
-		tx.Commit()
-		database.Close()
+		securities := make([]Security, 0, len(stockPrices.BySymbol))
+		for _, securityID := range securityIDs {
+			if stockPrice, ok := stockPrices.BySymbol[securityID.Symbol]; ok {
+				securities = append(securities, Security{
+					Id:    securityID,
+					Price: stockPrice,
+				})
+			}
+		}
+		persistStockPricesErr := persistStockPrices(securities, tx)
+		checkDatabaseTxError(persistStockPricesErr, tx, database)
+
 		stdOut.Printf("Security prices synchronized in %.3fs.", time.Since(start).Seconds())
 	} else {
-		stdErr.Fatal("Please specify path to ibank data file.")
+		stdErr.Fatal("Please specify path to Banktivity data file.")
 	}
 }
