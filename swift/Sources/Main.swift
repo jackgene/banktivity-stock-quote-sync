@@ -47,7 +47,7 @@ struct Main: ParsableCommand {
     
     static func readSecurityIDs(db: Connection) throws -> [SecurityID] {
         let securityIDs: [SecurityID] = try db
-            .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ?", Self.maxSymbolLength)
+            .run("SELECT zuniqueid, zsymbol FROM zsecurity WHERE LENGTH(zsymbol) <= ? ORDER BY zsymbol", Self.maxSymbolLength)
             .compactMap {(row: Statement.Element) in
                 if let uniqueID = row[0] as? String, let symbol = row[1] as? String {
                     return SecurityID(uniqueID: uniqueID, symbol: symbol)
@@ -55,7 +55,6 @@ struct Main: ParsableCommand {
                     return nil
                 }
             }
-            .sorted { $0.symbol < $1.symbol }
         Self.logger.info("Found \(securityIDs.count) securities (\(securityIDs.map {$0.symbol}.joined(separator: ", ")))")
         
         return securityIDs
