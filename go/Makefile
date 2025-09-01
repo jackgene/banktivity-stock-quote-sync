@@ -6,5 +6,4 @@ clean:
 	@rm -f ibdq_go
 
 build:
-	@GOEXPERIMENT=jsonv2 go build -o ibdq_go
-
+	@go build -o ibdq_go

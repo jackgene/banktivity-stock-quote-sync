@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 	"database/sql/driver"
-	"encoding/json/v2"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -82,7 +82,7 @@ func getStockPrices(symbols []string) (StockPrices, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
-		if jsonDecodeErr := json.UnmarshalRead(resp.Body, &stockPrices); jsonDecodeErr != nil {
+		if jsonDecodeErr := json.NewDecoder(resp.Body).Decode(&stockPrices); jsonDecodeErr != nil {
 			return stockPrices, jsonDecodeErr
 		}
 
@@ -93,10 +93,6 @@ func getStockPrices(symbols []string) (StockPrices, error) {
 		}
 		return stockPrices, nil
 	}
-}
-
-func secondsSinceAppleEpoch(date time.Time) int {
-	return int(date.Add(12 * time.Hour).Sub(appleEpoch).Seconds())
 }
 
 func persistStockPrices(securities []Security, db Querier) error {
@@ -115,7 +111,7 @@ func persistStockPrices(securities []Security, db Querier) error {
 					zdate = $8 AND zsecurityid = $9
 				`,
 			security.Price.Volume, security.Price.Close, security.Price.High, security.Price.Low, security.Price.Open,
-			ent, opt, secondsSinceAppleEpoch(security.Price.Date), security.Id.UniqueId)
+			ent, opt, security.Price.Date.SecondsSinceAppleEpoch(), security.Id.UniqueId)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -126,7 +122,7 @@ func persistStockPrices(securities []Security, db Querier) error {
 		}
 
 		if updateCount > 0 {
-			stdOut.Printf("Existing entry for %v updated...\n", security.Id.Symbol)
+			stdOut.Printf("Existing entry for %v updated\n", security.Id.Symbol)
 		} else {
 			_, insertErr := db.Exec(
 				`INSERT INTO zprice (
@@ -135,12 +131,12 @@ func persistStockPrices(securities []Security, db Querier) error {
 					) VALUES (
 						$1, $2, $3, $4, $5, $6, $7, $8, $9
 					)`,
-				ent, opt, secondsSinceAppleEpoch(security.Price.Date), security.Id.UniqueId,
+				ent, opt, security.Price.Date.SecondsSinceAppleEpoch(), security.Id.UniqueId,
 				security.Price.Volume, security.Price.Close, security.Price.High, security.Price.Low, security.Price.Open)
 			if insertErr != nil {
 				return insertErr
 			}
-			stdOut.Printf("New entry for %v created...\n", security.Id.Symbol)
+			stdOut.Printf("New entry for %v created\n", security.Id.Symbol)
 		}
 		count += 1
 	}
@@ -153,8 +149,8 @@ func persistStockPrices(securities []Security, db Querier) error {
 		return updatePrimaryKeyErr
 	}
 
-	stdOut.Printf("Primary key for price updated...")
-	stdOut.Printf("Persisted prices for %v securities...\n", count)
+	stdOut.Printf("Primary key for price updated\n")
+	stdOut.Printf("Persisted prices for %v securities\n", count)
 	return nil
 }
 
@@ -204,8 +200,8 @@ func main() {
 		persistStockPricesErr := persistStockPrices(securities, tx)
 		checkDatabaseTxError(persistStockPricesErr, tx, database)
 
-		stdOut.Printf("Security prices synchronized in %.3fs.", time.Since(start).Seconds())
+		stdOut.Printf("Securities updated in %.3fs", time.Since(start).Seconds())
 	} else {
-		stdErr.Fatal("Please specify path to Banktivity data file.")
+		stdErr.Fatal("Please specify path to Banktivity data file")
 	}
 }
